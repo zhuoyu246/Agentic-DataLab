@@ -17,30 +17,32 @@ Our system employs a strict separation of concerns, heavily utilizing the **Supe
 
 ```mermaid
 graph TD
-    UI["Vue 3 Frontend Client"] <-->|"WebSocket / REST"| API["FastAPI Gateway"]
+    UI["Vue 3 Frontend Client"] <-->|"WebSocket / REST / SSE"| API["FastAPI Gateway"]
     
-    API --> Supervisor["Supervisor Agent (State Machine)"]
+    API <-->|"Stream / Interrupt / Resume"| Supervisor["Supervisor Node (DFA Router)"]
     
-    subgraph Swarm ["Multi-Agent Swarm (LangGraph)"]
-        Supervisor --> Planner["Planner Agent"]
-        Supervisor --> DataLoader["Data Loader Agent"]
-        Supervisor --> Cleaning["Cleaning Agent"]
-        Supervisor --> Feature["Feature Eng Agent"]
-        Supervisor --> AutoML["AutoML / H2O Agent"]
-        Supervisor --> Eval["Model Eval Agent"]
-        Supervisor --> Vis["Visualization Agent"]
+    subgraph LangGraph ["LangGraph State Machine (Hub-and-Spoke Topology)"]
+        direction TB
+        Supervisor -->|"Strategic Planning"| Planner["Planner Agent"]
+        Planner -->|"Execution Plan"| Supervisor
         
-        Eval --> Reflexion["Reflexion / Critic Agent"]
-        Reflexion -.->|"Feedback Loop"| AutoML
+        Supervisor -->|"O(1) Conditional Edge"| Workers["10+ Specialist Workers<br/>(SQL, AutoML, Cleaning, etc.)"]
+        Workers -->|"Return to Hub"| Supervisor
+        
+        Supervisor -.->|"Error Detected"| Reflexion["Reflexion Critic<br/>(Self-Correction)"]
+        Reflexion -.->|"Revised Instruction"| Supervisor
+        
+        Supervisor -->|"HITL Approval"| Human["Human-in-the-Loop<br/>(interrupt_before)"]
+        Human -->|"Command(resume)"| Supervisor
     end
     
-    subgraph Core ["Core Engine"]
-        MCP["MCP Governance"]
-        Memory["PostgreSQL Checkpointer"]
-        Idempotency["Idempotency Guard"]
+    subgraph Core ["Industrial Core Infrastructure"]
+        MCP["MCP Governance Layer<br/>(Validation & Rate Limits)"]
+        Memory["Redis/Postgres Checkpointer<br/>(State Persistence & TTL)"]
+        Reducer["Annotated Reducer<br/>(Sliding Window & Truncation)"]
     end
     
-    Swarm --> Core
+    LangGraph --> Core
 ```
 
 ---
@@ -82,7 +84,7 @@ graph TD
 ```
 
 **Core Prompt**:
-> "You are an expert planner. For the given objective, come up with a simple step-by-step plan. This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps."
+> "You are an elite Enterprise Data Science Architect and Macro Planner. Your sole job is to decompose the user's analytical goal into a sequence of executable steps. You are a STRATEGIST — you NEVER execute tools yourself. Each step must be assigned to exactly one specialist agent. Keep the plan minimal — do NOT add superfluous steps. Return ONLY strict JSON."
 
 ### 2. ReAct (Reasoning + Acting)
 
@@ -106,10 +108,10 @@ graph TD
         Obs -->|Feed back into Context| ReActAgent
     end
     
-    Tools[("🛠️ External Tools<br/>(Search, API, Python)")]
+    Tools[("🛠️ External Tools<br/>(MCP Governance Layer)")]
     Action <-->|Execute| Tools
     
-    ReActAgent -->|Finish| FinalAnswer(("🎯 Final Answer"))
+    ReActAgent -->|Finish / Max Iters| FinalAnswer(("🎯 Final Answer"))
     
     classDef default fill:#f9f9eb,stroke:#333,stroke-width:1px;
     classDef agent fill:#e6e6fa,stroke:#7b68ee,stroke-width:2px;
@@ -121,7 +123,7 @@ graph TD
 ```
 
 **Core Prompt**:
-> "Use the following format: Question: the input question you must answer | Thought: you should always think about what to do | Action: the action to take, should be one of [{tool_names}] | Action Input: the input to the action | Observation: the result of the action | ... (this Thought/Action/Action Input/Observation can repeat N times) | Thought: I now know the final answer | Final Answer: the final answer to the original input question"
+> "You are a ReAct-based AI assistant that solves complex tasks through iterative reasoning and tool usage. You MUST follow the structured Thought-Action-Observation loop strictly. ALWAYS start with a 'thought' that analyzes the current state. If a tool returns an error, reflect on WHY it failed and try a different approach. You have a maximum of 5 iterations. Use them wisely."
 
 ### 3. Reflection (反思与自我纠错)
 
@@ -143,6 +145,7 @@ graph TD
     end
     
     Env -->|Success / Pass| Output(("✅ Final Validated Answer"))
+    Critic -.->|"Circuit Breaker (Max Depth = 3)"| Output
     
     classDef default fill:#f9f9eb,stroke:#333,stroke-width:1px;
     classDef agent fill:#e6e6fa,stroke:#7b68ee,stroke-width:2px;
@@ -152,7 +155,7 @@ graph TD
 ```
 
 **Core Prompt**:
-> "You are an expert reviewer and code critic. You are given a previous attempt at a task, the code/output generated, and the resulting execution error or test failure. Your job is to carefully analyze the failure, explain exactly WHY the previous attempt failed, and provide actionable, specific feedback on how to fix it. DO NOT write the code yourself, only provide the detailed reflection and instructions for the generator to fix the issue."
+> "You are an expert reviewer, code critic, and debugging specialist. You are given a PREVIOUS ATTEMPT at a task that FAILED. Your job is to: 1. Carefully analyze the failure and explain exactly WHY it happened. 2. Identify the ROOT CAUSE. 3. Provide ACTIONABLE, SPECIFIC feedback on how to fix it. 4. Suggest a revised instruction that avoids the same mistake. Do NOT write the actual code yourself."
 
 ---
 
