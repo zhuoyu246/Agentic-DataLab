@@ -56,6 +56,29 @@ class EventBus:
                 except Exception:
                     pass
 
+    async def emit(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        type: str = "status",
+        message: str = "",
+        status: AgentRunStatus | None = None,
+        agent_name: str | None = None,
+        payload: dict | None = None,
+    ) -> None:
+        await self.publish(
+            AgentEvent(
+                session_id=session_id,
+                run_id=run_id,
+                type=type,  # type: ignore[arg-type]
+                status=status,
+                agent_name=agent_name,
+                message=message,
+                payload=payload or {},
+            )
+        )
+
     async def subscribe(
         self, session_id: str, last_event_id: str | None = None
     ) -> AsyncIterator[str]:
@@ -102,4 +125,3 @@ class EventBus:
             f"event: {event.type}\n"
             f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
         )
-
