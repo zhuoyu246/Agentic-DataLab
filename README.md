@@ -111,7 +111,7 @@ Agentic-DataLab/
 │           ├── PlotlyChart.vue          # Dynamic Data Visualization
 │           └── SidebarPanel.vue         # Project Navigation
 │
-└── leetcode_solutions/                  # Accompanying algorithmic solutions (O(1) Memory patterns)
+
 ```
 
 ---
