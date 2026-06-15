@@ -57,7 +57,7 @@ Our engine is built upon three foundational multi-agent paradigms. These pattern
 graph TD
     User(("🧑‍💻 User Query")) --> Planner["🧠 Planner Agent<br/>(Decompose task into steps)"]
     
-    subgraph Execution Loop
+    subgraph ExecutionLoop [Execution Loop]
         direction TB
         PlanQueue[("📋 Plan Queue")]
         Executor["🤖 Executor Agent<br/>(Executes single step)"]
@@ -92,7 +92,7 @@ graph TD
 graph TD
     Input(("📥 Input Objective")) --> ReActAgent
     
-    subgraph ReAct Loop [ReAct Iterative Loop]
+    subgraph ReActLoop [ReAct Iterative Loop]
         direction TB
         ReActAgent["🧠 ReAct Agent<br/>(LLM)"]
         
@@ -131,7 +131,7 @@ graph TD
 graph TD
     Input(("📥 User Request")) --> Generator
     
-    subgraph Reflection Framework
+    subgraph ReflectionFramework [Reflection Framework]
         direction TB
         Generator["✍️ Generator Agent<br/>(Drafts initial response/code)"]
         Env[("💻 Environment / Tests<br/>(Execution or Evaluator)")]
