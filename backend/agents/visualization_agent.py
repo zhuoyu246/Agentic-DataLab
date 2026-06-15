@@ -1,3 +1,12 @@
+"""
+VisualizationAgent — Plotly chart generation with intelligent chart selection.
+
+Auto-selects chart type based on data characteristics:
+- Scatter for multi-numeric with relationship keywords
+- Histogram for single numeric distribution
+- Bar for categorical frequency
+- Fallback chart on any rendering failure
+"""
 from __future__ import annotations
 
 import plotly.express as px
@@ -6,6 +15,24 @@ import plotly.graph_objects as go
 
 from agents.base import AgentContext, AgentResult, BaseAgent
 from schemas import ArtifactEnvelope
+
+VISUALIZATION_PROMPT = """\
+You are an expert data visualization specialist. Your task is to generate
+the most insightful chart for the given data:
+
+1. **Chart Selection**: Choose the chart type that best reveals patterns:
+   - Scatter plot: for relationships between two numeric variables
+   - Histogram: for single variable distribution analysis
+   - Bar chart: for categorical frequency comparison
+   - Box plot: for statistical distribution and outlier detection
+   - Heatmap: for correlation matrices
+2. **Color Encoding**: Use a low-cardinality categorical column for color grouping
+3. **Sampling**: For large datasets (>2000 rows), use stratified sampling
+4. **Payload Budget**: Keep Plotly JSON under 350KB to prevent UI lag
+5. **Graceful Degradation**: If primary chart fails, render a safe fallback chart
+
+Generate clean, professional charts with appropriate labels and templates.
+"""
 
 
 class VisualizationAgent(BaseAgent):
@@ -43,17 +70,13 @@ class VisualizationAgent(BaseAgent):
                 "scatter" in instruction.lower() or "关系" in instruction
             ):
                 fig = px.scatter(
-                    frame,
-                    x=numeric_cols[0],
-                    y=numeric_cols[1],
+                    frame, x=numeric_cols[0], y=numeric_cols[1],
                     color=low_card_color,
                     render_mode="webgl" if len(frame) > 1_000 else "auto",
                 )
             elif numeric_cols:
                 fig = px.histogram(
-                    frame,
-                    x=numeric_cols[0],
-                    color=low_card_color,
+                    frame, x=numeric_cols[0], color=low_card_color,
                     nbins=min(40, max(10, int(len(frame) ** 0.5))),
                 )
             else:
@@ -74,19 +97,13 @@ class VisualizationAgent(BaseAgent):
             degraded = True
             message = f"Primary chart failed; fallback chart rendered: {exc}"
         return AgentResult(
-            message=message,
-            degraded=degraded,
+            message=message, degraded=degraded,
             artifacts=[
                 ArtifactEnvelope(
-                    kind="plotly_chart",
-                    title="Visualization",
+                    kind="plotly_chart", title="Visualization",
                     dataset_id=meta.id,
-                    payload={
-                        "plotly_json": payload,
-                        "rows_used": int(len(frame)),
-                        "source_rows": int(len(df)),
-                        "source_columns": int(len(df.columns)),
-                    },
+                    payload={"plotly_json": payload, "rows_used": int(len(frame)),
+                             "source_rows": int(len(df)), "source_columns": int(len(df.columns))},
                     degraded=degraded,
                 )
             ],
@@ -118,9 +135,7 @@ class VisualizationAgent(BaseAgent):
         fig = go.Figure()
         fig.add_annotation(
             text="Chart exceeded server payload budget; request a narrower chart.",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
+            x=0.5, y=0.5, showarrow=False,
         )
         fig.update_layout(template="plotly_white", xaxis={"visible": False}, yaxis={"visible": False})
         return pio.to_json(fig, validate=False, remove_uids=True), True

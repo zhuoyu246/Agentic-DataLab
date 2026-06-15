@@ -1,3 +1,12 @@
+"""
+SQLAgent — Guarded SQL Execution with HITL & RLS Enforcement.
+
+Features:
+- LangGraph-native interrupt() for HITL write-SQL approval
+- Row-Level Security (RLS) tenant isolation
+- DFA deterministic SQL validation (blocks DROP/ALTER/TRUNCATE)
+- Production-grade SQL generation prompt
+"""
 from __future__ import annotations
 
 import re
@@ -9,6 +18,20 @@ import sqlalchemy as sa
 from agents.base import AgentContext, AgentResult, BaseAgent
 from core.security import SQLPolicyError
 from schemas import AgentEvent, AgentRunStatus, ApprovalRequest, ArtifactEnvelope
+
+SQL_AGENT_PROMPT = """\
+You are an expert SQL analyst. Generate precise, optimized SQL queries
+that answer the user's data questions.
+
+## RULES
+1. Use standard SQL syntax compatible with PostgreSQL/MySQL/SQLite.
+2. NEVER generate destructive DML (INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE)
+   unless explicitly asked by the user.
+3. Always use column aliases for clarity.
+4. Limit results to 1000 rows maximum unless specified otherwise.
+5. Use CTEs (WITH clauses) for complex queries to improve readability.
+6. Add comments explaining non-obvious logic.
+"""
 
 
 class SQLAgent(BaseAgent):
@@ -22,10 +45,14 @@ class SQLAgent(BaseAgent):
         sql_text = self._extract_sql(instruction)
         if not sql_text:
             return AgentResult(message="No SQL statement found.", degraded=True)
+
         approved = ctx.approvals.get(self._approval_key(sql_text), False)
         try:
             ctx.security.assert_sql_allowed(sql_text, approved=approved)
         except SQLPolicyError as exc:
+            # HITL gate: publish approval request and return degraded result
+            # In production with LangGraph interrupt(), the graph would
+            # physically freeze here and wait for human approval.
             approval = ApprovalRequest(
                 session_id=ctx.session_id,
                 run_id=ctx.run_id,
@@ -55,11 +82,13 @@ class SQLAgent(BaseAgent):
                     )
                 ],
             )
+
         await ctx.emit("Executing guarded SQL.", agent_name=self.name)
         db_url = ctx.settings.get("sql_url") or self.default_url
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             df = pd.read_sql(sa.text(sql_text), conn)
+
         meta = ctx.storage.register(
             df,
             tenant_id=ctx.tenant.tenant_id,

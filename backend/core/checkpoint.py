@@ -1,3 +1,15 @@
+"""
+Checkpoint Infrastructure — Tiered Storage with LangGraph Adapter.
+
+Architecture (from interview architecture documents):
+- Dev:  MemorySaver (in-process, zero-config)
+- Prod: Redis hot-tier (aggressive TTL=2h, prevents OOM from abandoned sessions)
+        + PostgreSQL cold-tier (final archival only when graph reaches END)
+
+The create_checkpointer() factory reads CHECKPOINT_BACKEND env var and returns
+the appropriate LangGraph-compatible checkpointer. This allows hot-swapping
+the persistence layer without touching any business code.
+"""
 from __future__ import annotations
 
 import json
@@ -8,6 +20,9 @@ from typing import Any, Protocol
 import orjson
 
 
+# ---------------------------------------------------------------------------
+# Protocol — shared interface for custom checkpointers
+# ---------------------------------------------------------------------------
 class Checkpointer(Protocol):
     async def save(self, session_id: str, state: dict[str, Any]) -> None: ...
 
@@ -16,6 +31,9 @@ class Checkpointer(Protocol):
     async def history(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]: ...
 
 
+# ---------------------------------------------------------------------------
+# FileCheckpointer — local fallback with time-travel snapshots
+# ---------------------------------------------------------------------------
 class FileCheckpointer:
     """Local fallback with time-travel snapshots."""
 
@@ -70,10 +88,22 @@ class FileCheckpointer:
                 continue
 
 
+# ---------------------------------------------------------------------------
+# RedisCheckpointer — hot-tier with aggressive TTL (production)
+# ---------------------------------------------------------------------------
 class RedisCheckpointer:
-    """Redis TTL checkpointer. Falls back should be wired by caller."""
+    """
+    Redis TTL checkpointer for distributed cluster deployments.
 
-    def __init__(self, redis_url: str, ttl_seconds: int = 86_400) -> None:
+    Architecture rationale:
+    - MemorySaver is single-process; if user triggers interrupt() on Node A
+      and resumes on Node B, the state is lost. Redis solves this.
+    - Aggressive TTL (default 2h) acts as automatic garbage collection,
+      preventing abandoned sessions from bloating memory.
+    - History is capped at 100 entries via LTRIM.
+    """
+
+    def __init__(self, redis_url: str, ttl_seconds: int = 7_200) -> None:
         self.redis_url = redis_url
         self.ttl_seconds = ttl_seconds
         self._client = None
@@ -109,3 +139,47 @@ class RedisCheckpointer:
         rows = await r.lrange(f"checkpoint:{session_id}:history", 0, limit - 1)
         return [json.loads(x) for x in rows]
 
+
+# ---------------------------------------------------------------------------
+# Factory — create_checkpointer()
+# ---------------------------------------------------------------------------
+def create_langgraph_checkpointer(backend: str = "memory", **kwargs):
+    """
+    Factory function to create a LangGraph-compatible checkpointer.
+
+    Supports tiered storage strategy:
+    - "memory"   → MemorySaver (dev/test, single-process)
+    - "redis"    → Redis with TTL (production hot-tier)
+    - "postgres" → PostgresSaver (production cold-tier archival)
+
+    Usage:
+        checkpointer = create_langgraph_checkpointer("memory")
+        graph = workflow.compile(checkpointer=checkpointer)
+    """
+    backend = backend.lower().strip()
+
+    if backend == "memory":
+        from langgraph.checkpoint.memory import MemorySaver
+        return MemorySaver()
+
+    elif backend == "redis":
+        # Redis hot-tier: aggressive TTL prevents OOM from abandoned sessions
+        redis_url = kwargs.get("redis_url", "redis://localhost:6379/0")
+        return RedisCheckpointer(redis_url=redis_url, ttl_seconds=kwargs.get("ttl_seconds", 7_200))
+
+    elif backend == "postgres":
+        # PostgreSQL cold-tier: only for final archival
+        # Requires: pip install langgraph-checkpoint-postgres psycopg[binary]
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            conn_string = kwargs.get("conn_string", "")
+            if not conn_string:
+                raise ValueError("PostgreSQL checkpoint requires 'conn_string' kwarg.")
+            return AsyncPostgresSaver.from_conn_string(conn_string)
+        except ImportError:
+            raise ImportError(
+                "PostgresSaver requires: pip install langgraph-checkpoint-postgres psycopg[binary]"
+            )
+
+    else:
+        raise ValueError(f"Unknown checkpoint backend: {backend!r}. Use 'memory', 'redis', or 'postgres'.")

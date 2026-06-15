@@ -13,3 +13,5 @@ storage/
 node_modules/
 dist/
 .vite/
+.venv/
+backend/.venv/

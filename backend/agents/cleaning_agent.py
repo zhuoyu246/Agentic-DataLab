@@ -1,9 +1,31 @@
+"""
+DataCleaningAgent — Deterministic cleaning with production-grade prompt.
+
+Handles: deduplication, missing value imputation (median/mode),
+string trimming, datetime parsing, and data type normalization.
+Results are written to the physically isolated 'data_cleaned' state slot.
+"""
 from __future__ import annotations
 
 import pandas as pd
 
 from agents.base import AgentContext, AgentResult, BaseAgent
 from schemas import ArtifactEnvelope
+
+CLEANING_PROMPT = """\
+You are an expert data cleaning specialist. Your task is to prepare
+raw data for downstream analysis by applying these deterministic operations:
+
+1. **Deduplication**: Remove exact duplicate rows
+2. **String Normalization**: Strip whitespace from text columns
+3. **Missing Value Imputation**:
+   - Categorical columns: fill with mode (most frequent value)
+   - Numeric columns: fill with median (robust to outliers)
+4. **DateTime Detection**: Auto-parse columns with 'date'/'time' in their name
+5. **Type Optimization**: Downcast numeric types where possible
+
+Report all changes made with before/after metrics.
+"""
 
 
 class DataCleaningAgent(BaseAgent):
@@ -64,4 +86,3 @@ class DataCleaningAgent(BaseAgent):
                 )
             ],
         )
-

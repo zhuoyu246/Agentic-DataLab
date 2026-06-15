@@ -1,9 +1,28 @@
+"""
+FeatureEngineeringAgent — Type-aware encoding and derived feature generation.
+
+Results are written to the 'data_features' isolated state slot.
+Preserves target column integrity throughout the transformation pipeline.
+"""
 from __future__ import annotations
 
 import pandas as pd
 
 from agents.base import AgentContext, AgentResult, BaseAgent
 from schemas import ArtifactEnvelope
+
+FEATURE_PROMPT = """\
+You are an expert ML feature engineer. Your task is to transform raw/cleaned
+data into model-ready features:
+
+1. **Categorical Encoding**: One-hot encode low-cardinality (<= 20 unique) categorical columns
+2. **DateTime Expansion**: Extract year, month, day, weekday from datetime columns
+3. **Boolean Casting**: Convert boolean columns to integer (0/1)
+4. **Target Preservation**: NEVER encode or modify the target column
+5. **Missing Indicators**: Add binary flags for columns with significant missingness
+
+Report all transformations applied and final feature matrix dimensions.
+"""
 
 
 class FeatureEngineeringAgent(BaseAgent):
@@ -66,22 +85,12 @@ class FeatureEngineeringAgent(BaseAgent):
     @staticmethod
     def _infer_target(df: pd.DataFrame, instruction: str) -> str | None:
         import re
-
         m = re.search(r"target\s*[:=]\s*([A-Za-z_][\w]*)", instruction or "")
         if m and m.group(1) in df.columns:
             return m.group(1)
         for candidate in (
-            "target",
-            "label",
-            "y",
-            "churn",
-            "class",
-            "diagnosis",
-            "cancer",
-            "outcome",
-            "result",
-            "risk",
-            "disease",
+            "target", "label", "y", "churn", "class", "diagnosis",
+            "cancer", "outcome", "result", "risk", "disease",
         ):
             for col in df.columns:
                 col_lower = str(col).lower()

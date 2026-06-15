@@ -1,9 +1,39 @@
+"""
+AutoMLAgent — H2O AutoML with sklearn fallback and MLflow integration.
+
+Architecture:
+- Primary engine: H2O AutoML (enterprise-grade, distributed training)
+- Fallback engine: sklearn RandomForest (when H2O is unavailable)
+- MLflow logging: automatic experiment tracking and model registry
+- HITL: training jobs can be gated by human approval for cost control
+- Webhook-ready: long-running H2O jobs can be async with interrupt/resume
+
+Production training strategy prompt guides target inference and task detection.
+"""
 from __future__ import annotations
 
 from typing import Any
 
 from agents.base import AgentContext, AgentResult, BaseAgent
 from schemas import ArtifactEnvelope
+
+AUTOML_PROMPT = """\
+You are an AutoML training specialist. Your task is to:
+
+1. **Target Inference**: Automatically detect the target column from:
+   - Explicit mention in the instruction (target=column_name)
+   - Common naming conventions (target, label, y, class, outcome, churn)
+   - Last column as final fallback (if >= 2 columns)
+2. **Task Detection**: Determine classification vs regression:
+   - Classification: target is categorical or has <= 20 unique values
+   - Regression: target is continuous numeric
+3. **Engine Selection**: H2O AutoML first, sklearn RandomForest fallback
+4. **Model Logging**: Automatically log to MLflow with parameters and metrics
+5. **Diagnostics**: Generate confusion matrix, ROC curve (binary classification),
+   and feature importance charts
+
+Report the engine used, task type, target column, and all metrics.
+"""
 
 
 class AutoMLAgent(BaseAgent):

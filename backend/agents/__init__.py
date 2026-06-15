@@ -1,3 +1,9 @@
+"""
+Agentic-DataLab Agent Registry.
+
+Exports all specialist agents, base classes, and the supervisor orchestrator.
+All agents implement the BaseAgent protocol (async run(ctx, instruction) -> AgentResult).
+"""
 from .automl_agent import AutoMLAgent
 from .base import AgentContext, AgentResult, BaseAgent
 from .cleaning_agent import DataCleaningAgent
@@ -33,4 +39,3 @@ __all__ = [
     "SQLAgent",
     "VisualizationAgent",
 ]
-

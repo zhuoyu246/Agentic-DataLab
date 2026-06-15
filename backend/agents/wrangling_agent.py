@@ -1,9 +1,28 @@
+"""
+DataWranglingAgent — Merge, join, concat, aggregate and reshape datasets.
+
+Handles multi-dataset operations with production-grade strategy selection.
+"""
 from __future__ import annotations
 
 import pandas as pd
 
 from agents.base import AgentContext, AgentResult, BaseAgent
 from schemas import ArtifactEnvelope
+
+WRANGLING_PROMPT = """\
+You are an expert data wrangling specialist. Your task is to transform
+and combine datasets using the optimal strategy:
+
+1. **Merge/Join**: When datasets share common keys, perform appropriate join
+   (inner, left, right, outer) based on the relationship
+2. **Concatenation**: Stack datasets vertically when they share the same schema
+3. **Aggregation**: Group-by operations for summary statistics
+4. **Reshaping**: Pivot/unpivot operations for structural transformation
+5. **Type Normalization**: Convert low-cardinality string columns to category dtype
+
+Always report the operation performed and resulting dataset shape.
+"""
 
 
 class DataWranglingAgent(BaseAgent):
@@ -55,4 +74,3 @@ class DataWranglingAgent(BaseAgent):
                 )
             ],
         )
-
