@@ -45,6 +45,117 @@ graph TD
 
 ---
 
+## 🧠 Core Agentic Paradigms (核心智能体架构)
+
+Our engine is built upon three foundational multi-agent paradigms. These patterns ensure robust reasoning, resilient execution, and continuous self-improvement across the data science lifecycle.
+
+### 1. Plan-and-Execute (计划与执行架构)
+
+**Reference**: *Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models* (Wang et al., 2023)
+
+```mermaid
+graph TD
+    User(("🧑‍💻 User Query")) --> Planner["🧠 Planner Agent<br/>(Decompose task into steps)"]
+    
+    subgraph Execution Loop
+        direction TB
+        PlanQueue[("📋 Plan Queue")]
+        Executor["🤖 Executor Agent<br/>(Executes single step)"]
+        Tools[("🛠️ Tools / Environment")]
+        Replanner["🔄 Replanner / Monitor<br/>(Evaluate & Update Plan)"]
+        
+        Planner --> PlanQueue
+        PlanQueue -->|Pop Next Step| Executor
+        Executor <-->|Use Tool| Tools
+        Executor -->|Result| Replanner
+        Replanner -->|Update/Append Steps| PlanQueue
+    end
+    
+    Replanner -->|Task Complete| Output(("🎯 Final Answer"))
+    
+    classDef default fill:#f9f9eb,stroke:#333,stroke-width:1px;
+    classDef agent fill:#e6e6fa,stroke:#7b68ee,stroke-width:2px;
+    classDef io fill:#d4edda,stroke:#28a745,stroke-width:2px;
+    
+    class Planner,Executor,Replanner agent;
+    class User,Output io;
+```
+
+**Core Prompt**:
+> "You are an expert planner. For the given objective, come up with a simple step-by-step plan. This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps."
+
+### 2. ReAct (Reasoning + Acting)
+
+**Reference**: *ReAct: Synergizing Reasoning and Acting in Language Models* (Yao et al., 2022)
+
+```mermaid
+graph TD
+    Input(("📥 Input Objective")) --> ReActAgent
+    
+    subgraph ReAct Loop [ReAct Iterative Loop]
+        direction TB
+        ReActAgent["🧠 ReAct Agent<br/>(LLM)"]
+        
+        Thought["💭 Thought<br/>(Reason about current state)"]
+        Action["⚡ Action<br/>(Select Tool + Input)"]
+        Obs["👁️ Observation<br/>(Tool Execution Result)"]
+        
+        ReActAgent --> Thought
+        Thought --> Action
+        Action --> Obs
+        Obs -->|Feed back into Context| ReActAgent
+    end
+    
+    Tools[("🛠️ External Tools<br/>(Search, API, Python)")]
+    Action <-->|Execute| Tools
+    
+    ReActAgent -->|Finish| FinalAnswer(("🎯 Final Answer"))
+    
+    classDef default fill:#f9f9eb,stroke:#333,stroke-width:1px;
+    classDef agent fill:#e6e6fa,stroke:#7b68ee,stroke-width:2px;
+    classDef state fill:#ffe4e1,stroke:#ff69b4,stroke-width:1px;
+    
+    class ReActAgent agent;
+    class Thought,Action,Obs state;
+    class Input,FinalAnswer fill:#d4edda,stroke:#28a745,stroke-width:2px;
+```
+
+**Core Prompt**:
+> "Use the following format: Question: the input question you must answer | Thought: you should always think about what to do | Action: the action to take, should be one of [{tool_names}] | Action Input: the input to the action | Observation: the result of the action | ... (this Thought/Action/Action Input/Observation can repeat N times) | Thought: I now know the final answer | Final Answer: the final answer to the original input question"
+
+### 3. Reflection (反思与自我纠错)
+
+**Reference**: *Reflexion: Language Agents with Verbal Reinforcement Learning* (Shinn et al., 2023)
+
+```mermaid
+graph TD
+    Input(("📥 User Request")) --> Generator
+    
+    subgraph Reflection Framework
+        direction TB
+        Generator["✍️ Generator Agent<br/>(Drafts initial response/code)"]
+        Env[("💻 Environment / Tests<br/>(Execution or Evaluator)")]
+        Critic["🧐 Critic / Reflector Agent<br/>(Analyzes errors & provides feedback)"]
+        
+        Generator -->|Output Draft| Env
+        Env -->|Execution Result / Error| Critic
+        Critic -->|Constructive Feedback| Generator
+    end
+    
+    Env -->|Success / Pass| Output(("✅ Final Validated Answer"))
+    
+    classDef default fill:#f9f9eb,stroke:#333,stroke-width:1px;
+    classDef agent fill:#e6e6fa,stroke:#7b68ee,stroke-width:2px;
+    
+    class Generator,Critic agent;
+    class Input,Output fill:#d4edda,stroke:#28a745,stroke-width:2px;
+```
+
+**Core Prompt**:
+> "You are an expert reviewer and code critic. You are given a previous attempt at a task, the code/output generated, and the resulting execution error or test failure. Your job is to carefully analyze the failure, explain exactly WHY the previous attempt failed, and provide actionable, specific feedback on how to fix it. DO NOT write the code yourself, only provide the detailed reflection and instructions for the generator to fix the issue."
+
+---
+
 ## 📂 Comprehensive Project Structure
 
 The codebase is strictly modularized into isolated backend and frontend workspaces to ensure scalability and ease of deployment. 
