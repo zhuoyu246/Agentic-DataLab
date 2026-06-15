@@ -17,30 +17,30 @@ Our system employs a strict separation of concerns, heavily utilizing the **Supe
 
 ```mermaid
 graph TD
-    UI[Vue 3 Frontend Client] <--> |WebSocket / REST| API[FastAPI Gateway]
+    UI["Vue 3 Frontend Client"] <-->|"WebSocket / REST"| API["FastAPI Gateway"]
     
-    API --> Supervisor[Supervisor Agent\nState Machine]
+    API --> Supervisor["Supervisor Agent (State Machine)"]
     
-    subgraph Multi-Agent Swarm (LangGraph)
-        Supervisor --> Planner[Planner Agent]
-        Supervisor --> DataLoader[Data Loader Agent]
-        Supervisor --> Cleaning[Cleaning Agent]
-        Supervisor --> Feature[Feature Eng Agent]
-        Supervisor --> AutoML[AutoML / H2O Agent]
-        Supervisor --> Eval[Model Eval Agent]
-        Supervisor --> Vis[Visualization Agent]
+    subgraph Swarm ["Multi-Agent Swarm (LangGraph)"]
+        Supervisor --> Planner["Planner Agent"]
+        Supervisor --> DataLoader["Data Loader Agent"]
+        Supervisor --> Cleaning["Cleaning Agent"]
+        Supervisor --> Feature["Feature Eng Agent"]
+        Supervisor --> AutoML["AutoML / H2O Agent"]
+        Supervisor --> Eval["Model Eval Agent"]
+        Supervisor --> Vis["Visualization Agent"]
         
-        Eval --> Reflexion[Reflexion / Critic Agent]
-        Reflexion -.-> |Feedback Loop| AutoML
+        Eval --> Reflexion["Reflexion / Critic Agent"]
+        Reflexion -.->|"Feedback Loop"| AutoML
     end
     
-    subgraph Core Engine
-        MCP[MCP Governance]
-        Memory[PostgreSQL Checkpointer]
-        Idempotency[Idempotency Guard]
+    subgraph Core ["Core Engine"]
+        MCP["MCP Governance"]
+        Memory["PostgreSQL Checkpointer"]
+        Idempotency["Idempotency Guard"]
     end
     
-    Multi-Agent Swarm --> Core Engine
+    Swarm --> Core
 ```
 
 ---
