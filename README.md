@@ -17,6 +17,8 @@ Agentic-DataLab features a dynamic, real-time Vue 3 interface to track multi-age
 
 <div align="center">
   <img src="docs/images/screenshot_1.png" alt="Agentic DataLab Workspace" width="80%">
+  <br/>
+  <img src="docs/images/screenshot_2.png" alt="Data Profiling & Artifacts" width="80%">
 </div>
 
 ---
