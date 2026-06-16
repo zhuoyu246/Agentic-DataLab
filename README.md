@@ -17,10 +17,6 @@ Agentic-DataLab features a dynamic, real-time Vue 3 interface to track multi-age
 
 <div align="center">
   <img src="docs/images/screenshot_1.png" alt="Agentic DataLab Workspace" width="80%">
-  <br/>
-  <img src="docs/images/screenshot_hitl_1.png" alt="Human-in-the-Loop (HITL) Intervention" width="80%">
-  <br/>
-  <img src="docs/images/screenshot_hitl_2.png" alt="HITL Approval Flow" width="80%">
 </div>
 
 ---
