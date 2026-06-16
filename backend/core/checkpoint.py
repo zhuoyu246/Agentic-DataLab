@@ -65,7 +65,7 @@ class FileCheckpointer:
         path = self.root / session_id / "latest.json"
         if not path.exists():
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data.get("state") if isinstance(data, dict) else None
 
     async def history(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:

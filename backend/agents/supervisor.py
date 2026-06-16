@@ -41,7 +41,6 @@ from langchain_core.messages import (
 )
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
 
 from agents.automl_agent import AutoMLAgent
 from agents.base import AgentContext, AgentResult, BaseAgent
@@ -153,10 +152,10 @@ class SupervisorState(TypedDict, total=False):
       locks for Plan-and-Execute anti-dead-loop defense
     """
     # Core control flow
-    ctx: AgentContext
+    ctx_ref: str
     prompt: str
     messages: Annotated[list[BaseMessage], _supervisor_merge_messages]
-    plan: PlanModel
+    plan: dict[str, Any]
     step_index: int
     max_steps: int
     next: str  # DFA routing signal
@@ -168,16 +167,16 @@ class SupervisorState(TypedDict, total=False):
     data_features: dict[str, Any]
 
     # Defensive control
-    handled_steps: set[str]     # Idempotency lock — completed steps
-    attempted_steps: set[str]   # Retry tracking — attempted steps
+    handled_steps: list[str]
+    attempted_steps: list[str]
     reflexion_count: int        # Reflection depth counter
     max_reflexion: int          # Reflection circuit breaker threshold
     is_approved: bool           # HITL approval state
 
     # Output
     final_message: str
-    artifacts: list[ArtifactEnvelope]
-    datasets: dict[str, DatasetMeta]
+    artifacts: list[dict[str, Any]]
+    datasets: dict[str, dict[str, Any]]
     active_dataset_id: str | None
     status: AgentRunStatus
 
@@ -208,8 +207,9 @@ class AgentSupervisor:
         max_steps: int = 12,
         max_reflexion_steps: int = 3,
         agents: dict[str, BaseAgent] | None = None,
-        checkpoint_backend: str = "memory",
+        checkpoint_backend: str | None = "memory",
         checkpoint_kwargs: dict[str, Any] | None = None,
+        enable_hitl_interrupts: bool = False,
     ) -> None:
         self.planner = planner
         self.max_steps = max_steps
@@ -217,12 +217,17 @@ class AgentSupervisor:
         self.agents = agents or self.default_agents()
         self.reflexion = ReflexionAgent()
         self.react = ReActToolAgent(llm=self.planner.llm)
+        self.enable_hitl_interrupts = enable_hitl_interrupts
+        self._contexts: dict[str, AgentContext] = {}
 
-        # Checkpointer: hot-swappable via factory
-        from core.checkpoint import create_langgraph_checkpointer
-        self._checkpointer = create_langgraph_checkpointer(
-            checkpoint_backend, **(checkpoint_kwargs or {})
-        )
+        self._checkpointer = None
+        if checkpoint_backend:
+            # Checkpointer: hot-swappable via factory. Runtime handles are kept
+            # outside graph state so snapshots remain serializable.
+            from core.checkpoint import create_langgraph_checkpointer
+            self._checkpointer = create_langgraph_checkpointer(
+                checkpoint_backend, **(checkpoint_kwargs or {})
+            )
         self.graph = self._compile_graph()
 
     @staticmethod
@@ -240,6 +245,43 @@ class AgentSupervisor:
             "mlflow": MLflowAgent(),
         }
 
+    def _ctx(self, state: SupervisorState) -> AgentContext:
+        ctx_ref = state.get("ctx_ref")
+        if not ctx_ref or ctx_ref not in self._contexts:
+            raise RuntimeError("Runtime AgentContext is unavailable for this graph run.")
+        return self._contexts[ctx_ref]
+
+    @staticmethod
+    def _dump_datasets(datasets: dict[str, DatasetMeta]) -> dict[str, dict[str, Any]]:
+        return {key: value.model_dump(mode="json") for key, value in datasets.items()}
+
+    @staticmethod
+    def _load_datasets(raw: dict[str, Any] | None) -> dict[str, DatasetMeta]:
+        out: dict[str, DatasetMeta] = {}
+        for key, value in (raw or {}).items():
+            out[key] = value if isinstance(value, DatasetMeta) else DatasetMeta.model_validate(value)
+        return out
+
+    @staticmethod
+    def _dump_artifacts(artifacts: list[ArtifactEnvelope]) -> list[dict[str, Any]]:
+        return [artifact.model_dump(mode="json") for artifact in artifacts]
+
+    @staticmethod
+    def _load_artifacts(raw: list[Any] | None) -> list[ArtifactEnvelope]:
+        return [
+            item if isinstance(item, ArtifactEnvelope) else ArtifactEnvelope.model_validate(item)
+            for item in (raw or [])
+        ]
+
+    @staticmethod
+    def _load_plan(state: SupervisorState) -> PlanModel:
+        raw = state.get("plan")
+        if isinstance(raw, PlanModel):
+            return raw
+        if raw:
+            return PlanModel.model_validate(raw)
+        return PlanModel(goal=state.get("prompt", ""), steps=[])
+
     # -------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------
@@ -255,8 +297,9 @@ class AgentSupervisor:
                 message="Supervisor started.",
             )
         )
+        self._contexts[ctx.thread_id] = ctx
         state: SupervisorState = {
-            "ctx": ctx,
+            "ctx_ref": ctx.thread_id,
             "prompt": ctx.prompt,
             "messages": [HumanMessage(content=ctx.prompt)],
             "step_index": 0,
@@ -266,37 +309,44 @@ class AgentSupervisor:
             ),
             "reflexion_count": 0,
             "max_reflexion": self.max_reflexion_steps,
-            "handled_steps": set(),
-            "attempted_steps": set(),
+            "handled_steps": [],
+            "attempted_steps": [],
             "is_approved": False,
             "last_error": None,
             "artifacts": [],
-            "datasets": dict(ctx.datasets),
+            "datasets": self._dump_datasets(ctx.datasets),
             "active_dataset_id": ctx.active_dataset_id,
             "status": AgentRunStatus.RUNNING,
         }
 
         # Run with thread_id for checkpointer-based session isolation
         config = {"configurable": {"thread_id": ctx.thread_id}}
-        final = await self.graph.ainvoke(state, config=config)
+        try:
+            final = await self.graph.ainvoke(state, config=config)
+        finally:
+            self._contexts.pop(ctx.thread_id, None)
 
+        status = AgentRunStatus(final.get("status", AgentRunStatus.SUCCEEDED))
+        artifacts = self._load_artifacts(final.get("artifacts", []))
+        datasets = self._load_datasets(final.get("datasets", {}))
         await ctx.events.publish(
             AgentEvent(
                 session_id=ctx.session_id,
                 run_id=ctx.run_id,
                 type="done",
-                status=final.get("status", AgentRunStatus.SUCCEEDED),
+                status=status,
                 agent_name="supervisor",
                 message=final.get("final_message", "Run complete."),
             )
         )
         return AgentResult(
             message=final.get("final_message", "Run complete."),
-            artifacts=final.get("artifacts", []),
-            datasets=final.get("datasets", {}),
+            artifacts=artifacts,
+            datasets=datasets,
             active_dataset_id=final.get("active_dataset_id"),
-            degraded=final.get("status") == AgentRunStatus.DEGRADED,
+            degraded=status == AgentRunStatus.DEGRADED,
             error=final.get("last_error"),
+            status=status,
         )
 
     # -------------------------------------------------------------------
@@ -366,17 +416,19 @@ class AgentSupervisor:
             if getattr(agent, "name", "") in ("sql_agent", "automl_agent")
         ]
 
-        return workflow.compile(
-            checkpointer=self._checkpointer,
-            interrupt_before=hitl_nodes if hitl_nodes else None,
-        )
+        compile_kwargs: dict[str, Any] = {}
+        if self._checkpointer is not None:
+            compile_kwargs["checkpointer"] = self._checkpointer
+        if self.enable_hitl_interrupts and hitl_nodes:
+            compile_kwargs["interrupt_before"] = hitl_nodes
+        return workflow.compile(**compile_kwargs)
 
     # -------------------------------------------------------------------
     # Node Implementations
     # -------------------------------------------------------------------
     async def _node_plan(self, state: SupervisorState) -> SupervisorState:
         """Strategic layer: decompose user intent into executable DAG steps."""
-        ctx = state["ctx"]
+        ctx = self._ctx(state)
         await ctx.emit("Planning multi-agent workflow.", agent_name="planner_agent")
         plan = await self.planner.plan(ctx, state["prompt"])
         if len(plan.steps) > state["max_steps"]:
@@ -386,7 +438,7 @@ class AgentSupervisor:
                 agent_name="supervisor",
                 event_type="warning",
             )
-        return {**state, "plan": plan, "final_message": ""}
+        return {**state, "plan": plan.model_dump(mode="json"), "final_message": ""}
 
     async def _node_router(self, state: SupervisorState) -> SupervisorState:
         """
@@ -409,8 +461,8 @@ class AgentSupervisor:
         6. Tracks step in idempotency ledger
         """
         async def _node(state: SupervisorState) -> SupervisorState:
-            ctx = state["ctx"]
-            plan = state.get("plan") or PlanModel(goal=state["prompt"], steps=[])
+            ctx = self._ctx(state)
+            plan = self._load_plan(state)
             step_index = int(state.get("step_index", 0))
             if step_index >= len(plan.steps):
                 return state
@@ -418,13 +470,13 @@ class AgentSupervisor:
 
             # Idempotency check — skip already handled steps
             step_key = f"{step_index}:{step.agent}"
-            handled = state.get("handled_steps", set())
+            handled = set(state.get("handled_steps", []))
             if step_key in handled:
                 logger.info(f"Skipping already handled step: {step_key}")
                 return {**state, "step_index": step_index + 1}
 
             # Track attempt
-            attempted = set(state.get("attempted_steps", set()))
+            attempted = set(state.get("attempted_steps", []))
             attempted.add(step_key)
 
             await ctx.events.publish(
@@ -440,21 +492,23 @@ class AgentSupervisor:
             )
             try:
                 result = await agent.run(ctx, step.instruction)
-                merged_datasets = {**state.get("datasets", {}), **result.datasets}
+                state_datasets = self._load_datasets(state.get("datasets", {}))
+                merged_datasets = {**state_datasets, **result.datasets}
                 ctx.datasets.update(result.datasets)
                 if result.active_dataset_id:
                     ctx.active_dataset_id = result.active_dataset_id
-                artifacts = [*state.get("artifacts", []), *result.artifacts]
+                state_artifacts = self._load_artifacts(state.get("artifacts", []))
+                artifacts = [*state_artifacts, *result.artifacts]
+                result_status = result.status or (
+                    AgentRunStatus.DEGRADED if result.degraded else AgentRunStatus.SUCCEEDED
+                )
 
                 await ctx.events.publish(
                     AgentEvent(
                         session_id=ctx.session_id,
                         run_id=ctx.run_id,
                         type="agent_end",
-                        status=(
-                            AgentRunStatus.DEGRADED if result.degraded
-                            else AgentRunStatus.SUCCEEDED
-                        ),
+                        status=result_status,
                         agent_name=agent_name,
                         message=result.message,
                         payload={"metrics": result.metrics},
@@ -488,24 +542,35 @@ class AgentSupervisor:
                         name=agent_name,
                     )
                 ]
+                if result_status == AgentRunStatus.WAITING_APPROVAL:
+                    return {
+                        **state,
+                        "datasets": self._dump_datasets(merged_datasets),
+                        "active_dataset_id": (
+                            result.active_dataset_id or state.get("active_dataset_id")
+                        ),
+                        "artifacts": self._dump_artifacts(artifacts),
+                        "last_error": None,
+                        "final_message": final_message,
+                        "attempted_steps": sorted(attempted),
+                        "messages": new_messages,
+                        "status": AgentRunStatus.WAITING_APPROVAL,
+                    }
 
                 return {
                     **state,
                     "step_index": step_index + 1,
-                    "datasets": merged_datasets,
+                    "datasets": self._dump_datasets(merged_datasets),
                     "active_dataset_id": (
                         result.active_dataset_id or state.get("active_dataset_id")
                     ),
-                    "artifacts": artifacts,
+                    "artifacts": self._dump_artifacts(artifacts),
                     "last_error": result.error,
                     "final_message": final_message,
-                    "handled_steps": new_handled,
-                    "attempted_steps": attempted,
+                    "handled_steps": sorted(new_handled),
+                    "attempted_steps": sorted(attempted),
                     "messages": new_messages,
-                    "status": (
-                        AgentRunStatus.DEGRADED if result.degraded
-                        else AgentRunStatus.RUNNING
-                    ),
+                    "status": AgentRunStatus.DEGRADED if result.degraded else AgentRunStatus.RUNNING,
                 }
             except Exception as exc:
                 await ctx.events.publish(
@@ -521,7 +586,7 @@ class AgentSupervisor:
                 return {
                     **state,
                     "last_error": f"{agent_name}: {exc}",
-                    "attempted_steps": attempted,
+                    "attempted_steps": sorted(attempted),
                     "status": AgentRunStatus.DEGRADED,
                 }
 
@@ -535,7 +600,7 @@ class AgentSupervisor:
         instruction. The circuit breaker (max_reflexion) prevents infinite
         retry loops that would explode the API token bill.
         """
-        ctx = state["ctx"]
+        ctx = self._ctx(state)
         error = state.get("last_error") or "unknown error"
         reflexion_count = int(state.get("reflexion_count", 0))
 
@@ -545,7 +610,7 @@ class AgentSupervisor:
         )
 
         reflection = await self.reflexion.run(ctx, error)
-        plan = state.get("plan") or PlanModel(goal=state["prompt"], steps=[])
+        plan = self._load_plan(state)
         step_index = int(state.get("step_index", 0))
 
         if step_index < len(plan.steps):
@@ -557,7 +622,7 @@ class AgentSupervisor:
 
         return {
             **state,
-            "plan": plan,
+            "plan": plan.model_dump(mode="json"),
             "reflexion_count": reflexion_count + 1,
             "last_error": None,
         }
@@ -584,7 +649,7 @@ class AgentSupervisor:
         Even if the LLM is prompt-injected, it cannot bypass review
         or jump to unauthorized nodes.
         """
-        plan = state.get("plan") or PlanModel(goal=state.get("prompt", ""), steps=[])
+        plan = self._load_plan(state)
         step_index = int(state.get("step_index", 0))
 
         # All steps completed → finish
@@ -609,6 +674,8 @@ class AgentSupervisor:
         circuit breaker, route to the reflect node for self-correction.
         Otherwise, route back to the router for the next step.
         """
+        if state.get("status") == AgentRunStatus.WAITING_APPROVAL:
+            return "finish"
         if state.get("last_error"):
             if int(state.get("reflexion_count", 0)) < int(
                 state.get("max_reflexion", self.max_reflexion_steps)

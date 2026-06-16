@@ -70,10 +70,12 @@ Each step must be assigned to exactly one specialist agent.
   missingness, cardinality, and correlations. Produces structured EDA reports.
 - visualization: Generating interactive business intelligence charts (Plotly).
   Auto-selects chart type based on data characteristics.
-- feature_engineering: One-hot encoding, scaling, binning, datetime expansion,
-  and preprocessing for ML pipelines. Preserves target column integrity.
-- automl: Training machine learning models (H2O AutoML with sklearn fallback).
-  Automatically handles algorithm selection, hyperparameter tuning, and model logging.
+- feature_engineering: Type-aware feature derivation, missing indicators,
+  datetime expansion, frequency encodings, and preprocessing metadata.
+  Preserves target column integrity.
+- automl: Training supervised models and lightweight unsupervised workflows
+  (classification, regression, clustering, anomaly detection). Automatically
+  handles preprocessing, diagnostics, and model logging.
 - model_evaluation: Extracting model diagnostics and generating structured
   evaluation metrics (confusion matrix, ROC curve, feature importance).
 - mlflow: Experiment tracking, run searching, and model registry operations.
@@ -253,6 +255,13 @@ class PlannerAgent(BaseAgent):
             steps.append(PlanStep(agent="eda", instruction=prompt))
         if any(w in text for w in ["chart", "plot", "visual", "图", "可视化"]):
             steps.append(PlanStep(agent="visualization", instruction=prompt))
+        if any(w in text for w in ["predict", "cluster", "clustering", "segment", "anomaly", "outlier", "聚类", "分群", "异常"]):
+            if not any(s.agent == "cleaning" for s in steps) and has_dataset:
+                steps.append(PlanStep(agent="cleaning", instruction="Prepare data for modeling."))
+            if not any(s.agent == "feature_engineering" for s in steps):
+                steps.append(PlanStep(agent="feature_engineering", instruction=prompt))
+            steps.append(PlanStep(agent="automl", instruction=prompt))
+            steps.append(PlanStep(agent="model_evaluation", instruction=prompt))
         if any(w in text for w in ["train", "automl", "model", "预测", "建模"]):
             if not any(s.agent == "cleaning" for s in steps) and has_dataset:
                 steps.append(PlanStep(agent="cleaning", instruction="Prepare data for modeling."))
@@ -269,4 +278,12 @@ class PlannerAgent(BaseAgent):
                 ]
             else:
                 steps = [PlanStep(agent="data_loader", instruction=prompt)]
-        return PlanModel(goal=prompt, steps=steps[:12])
+        deduped: list[PlanStep] = []
+        seen: set[tuple[str, str]] = set()
+        for step in steps:
+            key = (step.agent, step.instruction)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(step)
+        return PlanModel(goal=prompt, steps=deduped[:12])

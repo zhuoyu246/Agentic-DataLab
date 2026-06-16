@@ -118,6 +118,7 @@ class AgentResult:
     metrics: dict[str, Any] = field(default_factory=dict)
     degraded: bool = False
     error: str | None = None
+    status: AgentRunStatus | None = None
 
 
 class BaseAgent:

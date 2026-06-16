@@ -18,6 +18,7 @@ from core.storage import DatasetStorage
 from schemas import (
     AgentRunStatus,
     ArtifactEnvelope,
+    ApprovalRequest,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -48,9 +49,10 @@ class WorkspaceService:
         )
         self.idempotency = IdempotencyLockRegistry()
         self.sessions: dict[str, SessionState] = {}
-        self.pending_approvals: dict[str, dict[str, str]] = {}
+        self.pending_approvals: dict[str, dict[str, object]] = {}
         self.approvals: dict[str, dict[str, bool]] = {}
         self.llm = VLLMClient(settings)
+        self._ensure_mlflow_schema()
 
     async def create_session(self, payload: SessionCreate) -> SessionState:
         session = SessionState(
@@ -121,8 +123,18 @@ class WorkspaceService:
         async with self.idempotency.acquire(idempotency_key):
             settings = request.settings or session.settings
             session.settings = settings
-            user_message = ChatMessage(role="user", content=request.prompt)
-            session.messages.append(user_message)
+            if request.resume_approval_id:
+                await self.events.emit(
+                    session_id=session.id,
+                    run_id=run_id,
+                    type="status",
+                    status=AgentRunStatus.RUNNING,
+                    agent_name="supervisor",
+                    message=f"Resuming approved workflow {request.resume_approval_id}.",
+                )
+            else:
+                user_message = ChatMessage(role="user", content=request.prompt)
+                session.messages.append(user_message)
             active_dataset_id = request.active_dataset_id or session.pipeline.active_dataset_id
             ctx = AgentContext(
                 session_id=session.id,
@@ -159,7 +171,7 @@ class WorkspaceService:
                 max_reflexion_steps=self.settings.max_reflexion_steps,
             )
             result = await supervisor.run(ctx)
-            self._index_pending_approvals(session.id, result.artifacts)
+            self._index_pending_approvals(session, result.artifacts, request)
             session.datasets.update(result.datasets)
             if result.active_dataset_id:
                 active_dataset_id = result.active_dataset_id
@@ -175,7 +187,7 @@ class WorkspaceService:
             session.updated_at = utc_now()
             self.sessions[session.id] = session
             await self.checkpoints.save(session.id, session.model_dump(mode="json"))
-            status = (
+            status = result.status or (
                 AgentRunStatus.DEGRADED
                 if result.degraded or result.error
                 else AgentRunStatus.SUCCEEDED
@@ -188,16 +200,23 @@ class WorkspaceService:
                 artifacts=result.artifacts,
                 pipeline=session.pipeline,
                 datasets=list(session.datasets.values()),
+                approvals=list(session.pending_approvals),
             )
 
     async def chat_async(self, session_id: str, request: ChatRequest):
         try:
             result = await self.chat(session_id, request)
+            done_message = (
+                "Workflow completed successfully."
+                if result.status == AgentRunStatus.SUCCEEDED
+                else f"Workflow completed with status: {result.status.value}."
+            )
             await self.events.emit(
                 session_id=session_id,
                 run_id=result.run_id,
                 type="done",
-                message="Workflow completed successfully.",
+                status=result.status,
+                message=done_message,
                 payload={"status": result.status.value}
             )
         except Exception as exc:
@@ -207,6 +226,7 @@ class WorkspaceService:
                 session_id=session_id,
                 run_id=None,
                 type="error",
+                status=AgentRunStatus.FAILED,
                 message=f"Workflow failed: {exc}",
                 payload={"error": str(exc)}
             )
@@ -214,20 +234,88 @@ class WorkspaceService:
                 session_id=session_id,
                 run_id=None,
                 type="done",
+                status=AgentRunStatus.FAILED,
                 message="Workflow completed with errors.",
                 payload={"status": "failed"}
             )
 
-    def record_approval(self, session_id: str, decision: ApprovalDecision) -> dict[str, str | bool]:
-        pending = self.pending_approvals.get(decision.approval_id)
-        if pending is None or pending.get("session_id") != session_id:
+    async def record_approval(self, session_id: str, decision: ApprovalDecision) -> dict[str, str | bool]:
+        await self.get_session(session_id)
+        pending = self._find_pending_approval(session_id, decision.approval_id)
+        if pending is None:
             raise KeyError(f"Approval not found: {decision.approval_id}")
-        self.approvals.setdefault(session_id, {})[pending["approval_key"]] = decision.approved
+        approval_key = str(pending["approval_key"])
+        self.approvals.setdefault(session_id, {})[approval_key] = decision.approved
+
+        session = await self.get_session(session_id)
+        if not decision.approved:
+            session.pending_approvals = [
+                item for item in session.pending_approvals if item.id != decision.approval_id
+            ]
+        session.updated_at = utc_now()
+        self.sessions[session.id] = session
+        await self.checkpoints.save(session.id, session.model_dump(mode="json"))
+
+        await self.events.emit(
+            session_id=session_id,
+            run_id=str(pending.get("run_id") or "") or None,
+            type="status",
+            status=AgentRunStatus.RUNNING if decision.approved else AgentRunStatus.CANCELLED,
+            agent_name="hitl",
+            message=(
+                f"Approval {decision.approval_id} accepted; resuming workflow."
+                if decision.approved
+                else f"Approval {decision.approval_id} rejected."
+            ),
+            payload={"approval_id": decision.approval_id, "approved": decision.approved},
+        )
+
+        if not decision.approved:
+            session.messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=f"Approval rejected: {decision.comment or 'No comment provided.'}",
+                    agent_name="hitl",
+                    metadata={"approval_id": decision.approval_id, "approved": False},
+                )
+            )
+            session.updated_at = utc_now()
+            self.sessions[session.id] = session
+            await self.checkpoints.save(session.id, session.model_dump(mode="json"))
+            self.pending_approvals.pop(decision.approval_id, None)
+
         return {
             "approval_id": decision.approval_id,
             "approved": decision.approved,
-            "approval_key": pending["approval_key"],
+            "approval_key": approval_key,
+            "resume_available": bool(decision.approved and pending.get("request")),
         }
+
+    async def resume_after_approval(self, session_id: str, approval_id: str) -> None:
+        pending = self._find_pending_approval(session_id, approval_id)
+        if not pending or not pending.get("request"):
+            return
+        request = ChatRequest.model_validate(pending["request"])
+        request = request.model_copy(
+            update={
+                "idempotency_key": f"{approval_id}:resume",
+                "resume_approval_id": approval_id,
+            }
+        )
+        try:
+            await self.chat_async(session_id, request)
+        finally:
+            self.pending_approvals.pop(approval_id, None)
+            try:
+                session = await self.get_session(session_id)
+            except KeyError:
+                return
+            session.pending_approvals = [
+                item for item in session.pending_approvals if item.id != approval_id
+            ]
+            session.updated_at = utc_now()
+            self.sessions[session.id] = session
+            await self.checkpoints.save(session.id, session.model_dump(mode="json"))
 
     async def dataset_preview(
         self, session_id: str, dataset_id: str, rows: int = 50
@@ -248,18 +336,118 @@ class WorkspaceService:
         self.sessions[session.id] = session
         return session
 
+    def _ensure_mlflow_schema(self) -> None:
+        uri = self.settings.mlflow_tracking_uri
+        if not uri or not uri.startswith("sqlite:///"):
+            return
+        db_path = self._mlflow_sqlite_path(uri)
+        marker = db_path.with_suffix(f"{db_path.suffix}.schema.ok")
+        try:
+            if db_path.exists() and marker.exists() and marker.stat().st_mtime >= db_path.stat().st_mtime:
+                return
+        except OSError:
+            pass
+
+        import threading
+
+        thread = threading.Thread(
+            target=self._run_mlflow_schema_upgrade,
+            args=(uri, marker),
+            daemon=True,
+        )
+        thread.start()
+
+    @staticmethod
+    def _mlflow_sqlite_path(uri: str) -> Path:
+        raw = uri.removeprefix("sqlite:///")
+        path = Path(raw)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _run_mlflow_schema_upgrade(uri: str, marker: Path) -> None:
+        try:
+            import subprocess
+            import sys
+
+            completed = subprocess.run(
+                [sys.executable, "-m", "mlflow", "db", "upgrade", uri],
+                cwd=str(Path.cwd()),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=120,
+                check=False,
+            )
+            if completed.returncode == 0:
+                marker.touch(exist_ok=True)
+        except Exception:
+            # MLflow logging is already treated as optional/degraded by agents.
+            pass
+
     def _index_pending_approvals(
-        self, session_id: str, artifacts: list[ArtifactEnvelope]
+        self,
+        session: SessionState,
+        artifacts: list[ArtifactEnvelope],
+        request: ChatRequest,
     ) -> None:
         for artifact in artifacts:
             if artifact.kind != "approval_required":
                 continue
             payload = artifact.payload or {}
-            approval_id = payload.get("id")
-            sql = (payload.get("proposed_action") or {}).get("sql")
-            if isinstance(approval_id, str) and isinstance(sql, str):
+            try:
+                approval = ApprovalRequest.model_validate(payload)
+            except Exception:
+                continue
+            proposed = approval.proposed_action or {}
+            approval_key = proposed.get("approval_key")
+            sql = proposed.get("sql")
+            if not isinstance(approval_key, str) and isinstance(sql, str):
                 digest = hashlib.sha256(sql.encode("utf-8", errors="ignore")).hexdigest()
-                self.pending_approvals[approval_id] = {
-                    "session_id": session_id,
-                    "approval_key": f"sql:{digest}",
-                }
+                approval_key = f"sql:{digest}"
+                proposed["approval_key"] = approval_key
+                approval = approval.model_copy(update={"proposed_action": proposed})
+                artifact.payload = approval.model_dump(mode="json")
+            if not isinstance(approval_key, str):
+                continue
+
+            resume_request = request.model_dump(mode="json")
+            resume_request["resume_approval_id"] = approval.id
+            proposed["resume_request"] = resume_request
+            approval = approval.model_copy(update={"proposed_action": proposed})
+            artifact.payload = approval.model_dump(mode="json")
+            self.pending_approvals[approval.id] = {
+                "session_id": session.id,
+                "run_id": approval.run_id,
+                "approval_key": approval_key,
+                "request": resume_request,
+            }
+            if not any(item.id == approval.id for item in session.pending_approvals):
+                session.pending_approvals.append(approval)
+
+    def _find_pending_approval(
+        self, session_id: str, approval_id: str
+    ) -> dict[str, object] | None:
+        pending = self.pending_approvals.get(approval_id)
+        if pending and pending.get("session_id") == session_id:
+            return pending
+        session = self.sessions.get(session_id)
+        if not session:
+            return None
+        for approval in session.pending_approvals:
+            if approval.id != approval_id:
+                continue
+            proposed = approval.proposed_action or {}
+            approval_key = proposed.get("approval_key")
+            if not isinstance(approval_key, str):
+                return None
+            restored = {
+                "session_id": session_id,
+                "run_id": approval.run_id,
+                "approval_key": approval_key,
+                "request": proposed.get("resume_request"),
+            }
+            self.pending_approvals[approval_id] = restored
+            return restored
+        return None

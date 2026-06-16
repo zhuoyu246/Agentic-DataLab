@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { nextTick, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import Plotly from 'plotly.js-dist-min'
 
 const props = defineProps<{
@@ -8,14 +8,18 @@ const props = defineProps<{
 
 const chartRef = ref<HTMLElement | null>(null)
 
-const renderChart = () => {
+const renderChart = async () => {
   if (!chartRef.value || !props.plotlyJsonStr) return
+  await nextTick()
   try {
     const dataAndLayout = JSON.parse(props.plotlyJsonStr)
     const data = dataAndLayout.data || []
     const layout = dataAndLayout.layout || {}
     const config = { responsive: true, displayModeBar: false }
-    Plotly.newPlot(chartRef.value, data, layout, config)
+    Plotly.react(chartRef.value, data, layout, config)
+    requestAnimationFrame(() => {
+      if (chartRef.value) Plotly.Plots.resize(chartRef.value)
+    })
   } catch (err) {
     console.error('Failed to parse or render Plotly chart:', err)
   }
@@ -37,5 +41,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="chartRef" class="plotly-container" style="width: 100%; height: 400px;"></div>
+  <div ref="chartRef" class="plotly-container"></div>
 </template>

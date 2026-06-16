@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from api.deps import workspace
-from schemas import ChatRequest, ChatResponse, ChatMessage, AgentRunStatus, PipelineGraph
+from schemas import AgentRunStatus, ChatMessage, ChatRequest, ChatResponse
 from services.workspace import WorkspaceService
-from uuid import uuid4
 
 router = APIRouter(prefix="/sessions/{session_id}/chat", tags=["chat"])
 
@@ -18,18 +19,23 @@ async def chat(
     service: WorkspaceService = Depends(workspace),
 ):
     try:
+        session = await service.get_session(session_id)
         background_tasks.add_task(service.chat_async, session_id, payload)
         return ChatResponse(
             session_id=session_id,
             run_id=uuid4().hex,
             status=AgentRunStatus.QUEUED,
-            message=ChatMessage(role="assistant", content="[supervisor] 已提交任务，等待调度...", metadata={"live": True}),
+            message=ChatMessage(
+                role="assistant",
+                content="[supervisor] Task queued; waiting for scheduler...",
+                metadata={"live": True},
+            ),
             artifacts=[],
-            pipeline=PipelineGraph(),
-            datasets=[]
+            pipeline=session.pipeline,
+            datasets=list(session.datasets.values()),
+            approvals=list(session.pending_approvals),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-

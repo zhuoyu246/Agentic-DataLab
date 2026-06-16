@@ -65,6 +65,16 @@ export interface ArtifactEnvelope {
   error?: string | null
 }
 
+export interface ApprovalRequest {
+  id: string
+  session_id: string
+  run_id: string
+  tool_name: string
+  reason: string
+  proposed_action: Record<string, unknown>
+  created_at: string
+}
+
 export interface PipelineNode {
   id: string
   label: string
@@ -95,7 +105,9 @@ export interface SessionState {
   messages: ChatMessage[]
   datasets: Record<string, DatasetMeta>
   artifacts: ArtifactEnvelope[]
+  pending_approvals: ApprovalRequest[]
   pipeline: PipelineGraph
+  updated_at?: string
 }
 
 export interface AgentEvent {
@@ -118,6 +130,7 @@ export interface ChatResponse {
   artifacts: ArtifactEnvelope[]
   pipeline: PipelineGraph
   datasets: DatasetMeta[]
+  approvals: ApprovalRequest[]
 }
 
 const API_PREFIX = '/api/v1'
@@ -193,4 +206,3 @@ export function openEventStream(sessionId: string, onEvent: (event: AgentEvent) 
   }
   return source
 }
-

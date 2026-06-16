@@ -162,6 +162,7 @@ class ChatRequest(BaseModel):
     active_dataset_id: str | None = None
     settings: WorkspaceSettings | None = None
     idempotency_key: str | None = None
+    resume_approval_id: str | None = None
     stream: bool = True
 
 
@@ -185,6 +186,7 @@ class SessionState(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     datasets: dict[str, DatasetMeta] = Field(default_factory=dict)
     artifacts: list[ArtifactEnvelope] = Field(default_factory=list)
+    pending_approvals: list[ApprovalRequest] = Field(default_factory=list)
     pipeline: PipelineGraph = Field(default_factory=PipelineGraph)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -198,4 +200,3 @@ class ProjectSummary(BaseModel):
     artifacts_total: int = 0
     saved_at: datetime = Field(default_factory=utc_now)
     uri: str | None = None
-

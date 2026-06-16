@@ -50,15 +50,23 @@ class SQLAgent(BaseAgent):
         try:
             ctx.security.assert_sql_allowed(sql_text, approved=approved)
         except SQLPolicyError as exc:
+            if "requires HITL approval" not in str(exc):
+                return AgentResult(
+                    message=f"SQL blocked by policy: {exc}",
+                    degraded=True,
+                    error=str(exc),
+                    status=AgentRunStatus.DEGRADED,
+                )
             # HITL gate: publish approval request and return degraded result
             # In production with LangGraph interrupt(), the graph would
             # physically freeze here and wait for human approval.
+            approval_key = self._approval_key(sql_text)
             approval = ApprovalRequest(
                 session_id=ctx.session_id,
                 run_id=ctx.run_id,
                 tool_name="sql.execute",
                 reason=str(exc),
-                proposed_action={"sql": sql_text},
+                proposed_action={"approval_key": approval_key, "sql": sql_text},
             )
             await ctx.events.publish(
                 AgentEvent(
@@ -73,7 +81,6 @@ class SQLAgent(BaseAgent):
             )
             return AgentResult(
                 message=f"SQL requires approval: {exc}",
-                degraded=True,
                 artifacts=[
                     ArtifactEnvelope(
                         kind="approval_required",
@@ -81,6 +88,8 @@ class SQLAgent(BaseAgent):
                         payload=approval.model_dump(mode="json"),
                     )
                 ],
+                metrics={"waiting_approval": True, "approval_id": approval.id},
+                status=AgentRunStatus.WAITING_APPROVAL,
             )
 
         await ctx.emit("Executing guarded SQL.", agent_name=self.name)

@@ -28,7 +28,7 @@ onMounted(() => {
           <p>Private multi-agent data science workspace</p>
         </div>
         <div class="status-pill" :data-busy="workspace.busy">
-          {{ workspace.busy ? 'Running' : 'Ready' }}
+          {{ workspace.busy ? 'Running' : workspace.pendingApprovals.length ? 'Approval' : 'Ready' }}
         </div>
       </header>
 
@@ -64,4 +64,3 @@ onMounted(() => {
     </section>
   </main>
 </template>
-

@@ -1,5 +1,14 @@
 import { defineStore } from 'pinia'
-import { api, openEventStream, type AgentEvent, type ArtifactEnvelope, type DatasetMeta, type SessionState, type WorkspaceSettings } from '../api/client'
+import {
+  api,
+  openEventStream,
+  type AgentEvent,
+  type ApprovalRequest,
+  type ArtifactEnvelope,
+  type DatasetMeta,
+  type SessionState,
+  type WorkspaceSettings,
+} from '../api/client'
 
 function defaultSettings(): WorkspaceSettings {
   return {
@@ -26,6 +35,7 @@ export const useWorkspace = defineStore('workspace', {
     events: [] as AgentEvent[],
     selectedDatasetId: null as string | null,
     selectedArtifact: null as ArtifactEnvelope | null,
+    targetColumn: '' as string,
     busy: false,
     error: null as string | null,
     eventSource: null as EventSource | null,
@@ -39,6 +49,17 @@ export const useWorkspace = defineStore('workspace', {
     artifacts(state): ArtifactEnvelope[] {
       return state.session?.artifacts ?? []
     },
+    selectedDataset(state): DatasetMeta | null {
+      if (!state.session || !state.selectedDatasetId) return null
+      return state.session.datasets[state.selectedDatasetId] ?? null
+    },
+    targetOptions(state): string[] {
+      if (!state.session || !state.selectedDatasetId) return []
+      return state.session.datasets[state.selectedDatasetId]?.columns ?? []
+    },
+    pendingApprovals(state): ApprovalRequest[] {
+      return state.session?.pending_approvals ?? []
+    },
     pipeline(state) {
       return state.session?.pipeline ?? { nodes: [], edges: [] }
     },
@@ -48,6 +69,7 @@ export const useWorkspace = defineStore('workspace', {
       if (this.session) return
       this.session = await api.createSession(this.settings)
       this.selectedDatasetId = this.session.pipeline.active_dataset_id ?? null
+      this.ensureTargetColumn()
       this.connectEvents()
     },
     connectEvents() {
@@ -58,7 +80,39 @@ export const useWorkspace = defineStore('workspace', {
         this.applyLiveEvent(event)
       })
     },
+    async refreshSession() {
+      if (!this.session) return
+      const session = await api.getSession(this.session.id)
+      this.session = session
+      this.selectedDatasetId = session.pipeline.active_dataset_id ?? this.selectedDatasetId
+      this.ensureTargetColumn()
+    },
+    ensureTargetColumn() {
+      const dataset = this.selectedDataset
+      if (!dataset) {
+        this.targetColumn = ''
+        return
+      }
+      if (this.targetColumn && dataset.columns.includes(this.targetColumn)) return
+      const candidates = ['target', 'label', 'y', 'churn', 'class', 'diagnosis', 'cancer', 'outcome', 'result', 'risk', 'disease']
+      const found = dataset.columns.find((column) => {
+        const lower = column.toLowerCase()
+        return candidates.some((candidate) => lower === candidate || lower.includes(candidate))
+      })
+      this.targetColumn = found ?? dataset.columns[dataset.columns.length - 1] ?? ''
+    },
+    selectDataset(datasetId: string) {
+      this.selectedDatasetId = datasetId
+      this.targetColumn = ''
+      this.ensureTargetColumn()
+    },
     applyLiveEvent(event: AgentEvent) {
+      if (event.type === 'approval_required' && this.session) {
+        this.refreshSession().catch((err) => {
+          this.error = String(err)
+        })
+      }
+
       if (!this.busy || !this.session || !this.liveAssistantMessageId) return
       const line = this.formatEventLine(event)
       if (line) {
@@ -76,31 +130,57 @@ export const useWorkspace = defineStore('workspace', {
       }
 
       if (event.type === 'done') {
-        api.getSession(this.session.id).then(session => {
-          this.session = session
-          this.selectedDatasetId = session.pipeline.active_dataset_id ?? this.selectedDatasetId
-          this.liveAssistantMessageId = null
-          this.liveLines = []
-          this.busy = false
-        }).catch(err => {
-          this.error = String(err)
-          this.liveAssistantMessageId = null
-          this.liveLines = []
-          this.busy = false
-        })
+        this.refreshSession()
+          .catch((err) => {
+            this.error = String(err)
+          })
+          .finally(() => {
+            this.liveAssistantMessageId = null
+            this.liveLines = []
+            this.busy = false
+          })
       }
     },
     formatEventLine(event: AgentEvent) {
       const agent = event.agent_name ? `[${event.agent_name}] ` : ''
       if (event.type === 'status') return `${agent}${event.message}`
-      if (event.type === 'agent_start') return `${agent}开始：${event.message}`
-      if (event.type === 'agent_end') return `${agent}完成：${event.message}`
-      if (event.type === 'artifact') return `${agent}产物：${event.message}`
-      if (event.type === 'approval_required') return `${agent}需要审批：${event.message}`
-      if (event.type === 'warning') return `${agent}降级/警告：${event.message}`
-      if (event.type === 'error') return `${agent}错误：${event.message}`
-      if (event.type === 'done') return `${agent}完成：${event.message}`
+      const labels: Record<string, string> = {
+        agent_start: 'started',
+        agent_end: 'finished',
+        artifact: 'artifact',
+        approval_required: 'approval required',
+        warning: 'warning',
+        error: 'error',
+        done: 'done',
+      }
+      if (labels[event.type]) return `${agent}${labels[event.type]}: ${event.message}`
       return ''
+    },
+    async decideApproval(approvalId: string, approved: boolean) {
+      if (!this.session || this.busy) return
+      this.error = null
+      try {
+        const sessionId = this.session.id
+        await api.approve(sessionId, approvalId, approved)
+        await this.refreshSession()
+        if (approved && this.session) {
+          this.busy = true
+          const liveId = crypto.randomUUID()
+          this.liveAssistantMessageId = liveId
+          this.liveLines = ['[hitl] Approval accepted; resuming workflow...']
+          this.session.messages.push({
+            id: liveId,
+            role: 'assistant',
+            content: this.liveLines.join('\n'),
+            created_at: new Date().toISOString(),
+            agent_name: 'hitl',
+            metadata: { live: true },
+          })
+        }
+      } catch (e) {
+        this.error = e instanceof Error ? e.message : String(e)
+        this.busy = false
+      }
     },
     async upload(file: File) {
       await this.ensureSession()
@@ -111,7 +191,8 @@ export const useWorkspace = defineStore('workspace', {
         const res = await api.uploadDataset(this.session.id, file)
         this.session.datasets[res.dataset.id] = res.dataset
         this.selectedDatasetId = res.dataset.id
-        this.session = await api.getSession(this.session.id)
+        this.targetColumn = ''
+        await this.refreshSession()
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
       } finally {
@@ -133,7 +214,7 @@ export const useWorkspace = defineStore('workspace', {
         })
         const liveId = crypto.randomUUID()
         this.liveAssistantMessageId = liveId
-        this.liveLines = ['[supervisor] 已提交任务，等待调度...']
+        this.liveLines = ['[supervisor] Task queued; waiting for scheduler...']
         this.session.messages.push({
           id: liveId,
           role: 'assistant',
@@ -142,16 +223,39 @@ export const useWorkspace = defineStore('workspace', {
           agent_name: 'supervisor',
           metadata: { live: true },
         })
-        // The endpoint now uses BackgroundTasks and returns immediately.
-        // We do not wait for the final response here.
         await api.chat(this.session.id, prompt, this.selectedDatasetId, this.settings)
-        // Note: busy=false is handled by applyLiveEvent when event.type === 'done'
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
         this.liveAssistantMessageId = null
         this.liveLines = []
         this.busy = false
       }
+    },
+    async runWorkflow(kind: string) {
+      await this.ensureSession()
+      if (!this.session || !this.selectedDatasetId) {
+        this.error = 'Upload or select a dataset first.'
+        return
+      }
+      this.ensureTargetColumn()
+      const target = this.targetColumn || this.targetOptions[this.targetOptions.length - 1] || ''
+      const prompts: Record<string, string> = {
+        eda: 'Run EDA profiling and generate data quality artifacts.',
+        charts: 'Generate a visualization suite with distributions, relationships, box plots, missingness, and correlation charts.',
+        features: target
+          ? `Create adaptive feature engineering report target=${target}.`
+          : 'Create adaptive feature engineering report.',
+        classification: target
+          ? `Train a classification model target=${target} and generate full diagnostics.`
+          : 'Train a classification model and generate full diagnostics.',
+        regression: target
+          ? `Train a regression model target=${target} and generate residual diagnostics.`
+          : 'Train a regression model and generate residual diagnostics.',
+        clustering: 'Cluster the records into useful segments and generate cluster diagnostics.',
+        anomaly: 'Detect anomalies and outliers and generate anomaly diagnostics.',
+        mlflow: 'Show MLflow experiment summary and latest model run information.',
+      }
+      await this.send(prompts[kind] ?? kind)
     },
   },
 })
