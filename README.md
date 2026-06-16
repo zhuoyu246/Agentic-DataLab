@@ -1,6 +1,6 @@
 # 🚀 Agentic-DataLab: Multi-Agent Data Science Workflow Orchestrator
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![License: Proprietary](https://img.shields.io/badge/License-Proprietary%20%2F%20All%20Rights%20Reserved-red.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Vue](https://img.shields.io/badge/vue-3.x-brightgreen)
 ![Status](https://img.shields.io/badge/status-Production--Ready-success)
