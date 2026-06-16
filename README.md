@@ -59,6 +59,73 @@ graph TD
 
 ---
 
+## 🔄 End-to-End Interaction Flow (前后端交互全链路)
+
+To handle high-concurrency LLM streaming and complex state pauses, the system employs an asynchronous event-driven architecture separating the REST API from the Server-Sent Events (SSE) bus.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    
+    box Frontend (Vue 3)
+    participant UI as Vue Components
+    participant Pinia as State Store
+    end
+    
+    box Backend (FastAPI)
+    participant API as REST / SSE Routes
+    participant EventBus as EventBus (Queue)
+    end
+    
+    box LangGraph Engine
+    participant Graph as Supervisor
+    participant Worker as Agent
+    participant Memory as Checkpointer
+    end
+
+    User->>UI: Submit Data Task
+    UI->>Pinia: Action: sendMessage
+    Pinia->>API: HTTP POST /chat (Trigger Execution)
+    API->>EventBus: Open SSE Connection (Subscribe)
+    API->>Graph: Invoke State Machine (Async Thread)
+    
+    rect rgb(240, 248, 255)
+        note right of EventBus: Phase 1: Asynchronous Streaming
+        Graph->>Worker: Dispatch Sub-task
+        Worker-->>EventBus: publish(AgentEvent)
+        EventBus-->>Pinia: SSE Yield (Event stream)
+        Pinia-->>UI: Reactive DOM Update (60fps)
+    end
+    
+    rect rgb(255, 240, 245)
+        note right of EventBus: Phase 2: QueueFull Graceful Degradation
+        Worker-->>EventBus: publish(Verbose LLM Log)
+        EventBus-->>EventBus: Queue Full! Drop old log
+        EventBus-->>EventBus: Insert DEGRADED warning
+        EventBus-->>Pinia: SSE Yield (warning: degraded)
+        Pinia-->>UI: Render "Backpressure" state
+    end
+    
+    rect rgb(255, 250, 240)
+        note right of EventBus: Phase 3: Human-in-the-Loop (HITL)
+        Worker->>Graph: Request Approval (interrupt)
+        Graph->>Memory: Persist current state & Pause
+        Graph-->>EventBus: publish(approval_required)
+        EventBus-->>Pinia: SSE Yield (approval UI trigger)
+        Pinia-->>UI: Render Approve/Reject Buttons
+        
+        User->>UI: Click "Approve"
+        UI->>Pinia: Action: submitApproval
+        Pinia->>API: HTTP POST /approvals (Resume)
+        API->>Graph: Command(resume={"action":"approve"})
+        Graph->>Memory: Restore state & Resume execution
+        Graph->>Worker: Execute risky tool
+    end
+```
+
+---
+
 ## 🧠 Core Agentic Paradigms (核心智能体架构)
 
 Our engine is built upon three foundational multi-agent paradigms. These patterns ensure robust reasoning, resilient execution, and continuous self-improvement across the data science lifecycle.
