@@ -123,6 +123,7 @@ class WorkspaceService:
         async with self.idempotency.acquire(idempotency_key):
             settings = request.settings or session.settings
             session.settings = settings
+            llm = VLLMClient(self.settings, api_key=settings.api_key)
             if request.resume_approval_id:
                 await self.events.emit(
                     session_id=session.id,
@@ -166,7 +167,7 @@ class WorkspaceService:
                 },
             )
             supervisor = AgentSupervisor(
-                PlannerAgent(self.llm),
+                PlannerAgent(llm),
                 max_steps=self.settings.max_agent_steps,
                 max_reflexion_steps=self.settings.max_reflexion_steps,
             )
@@ -176,7 +177,7 @@ class WorkspaceService:
             if result.active_dataset_id:
                 active_dataset_id = result.active_dataset_id
             session.artifacts.extend(result.artifacts)
-            session.pipeline = build_pipeline_graph(session.datasets, active_dataset_id)
+            session.pipeline = build_pipeline_graph(session.datasets, active_dataset_id, session.artifacts)
             assistant = ChatMessage(
                 role="assistant",
                 content=result.message,

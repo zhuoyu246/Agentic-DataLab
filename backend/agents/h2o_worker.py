@@ -43,6 +43,7 @@ def run_h2o_automl(
     input_path: Path,
     output_path: Path,
     target: str,
+    task: str,
     run_id: str,
     max_runtime_seconds: int,
     max_models: int,
@@ -56,7 +57,7 @@ def run_h2o_automl(
 
     _configure_local_proxy_bypass()
     h2o.no_progress()
-    df = pd.read_pickle(input_path)
+    df = pd.read_parquet(input_path)
     h2o.init(
         ip="127.0.0.1",
         max_mem_size="2G",
@@ -69,10 +70,15 @@ def run_h2o_automl(
         frame = h2o.H2OFrame(df)
         x = [c for c in frame.columns if c != target]
         y = target
-        is_classification = (
-            str(df[target].dtype) in {"object", "category", "string", "bool"}
-            or df[target].nunique(dropna=True) <= 20
-        )
+        if task == "classification":
+            is_classification = True
+        elif task == "regression":
+            is_classification = False
+        else:
+            is_classification = (
+                str(df[target].dtype) in {"object", "category", "string", "bool"}
+                or df[target].nunique(dropna=True) <= 20
+            )
         if is_classification:
             frame[y] = frame[y].asfactor()
         aml = H2OAutoML(
@@ -150,7 +156,113 @@ def run_h2o_automl(
                             })
                 except Exception:
                     pass
-            
+                # Actual / predicted class distribution
+                try:
+                    pred_df = leader.predict(frame).as_data_frame()
+                    if "predict" in pred_df.columns:
+                        actual = df[target].astype(str)
+                        predicted = pred_df["predict"].astype(str)
+                        actual_counts = actual.value_counts().rename_axis("class").reset_index(name="count")
+                        actual_counts["series"] = "actual"
+                        pred_counts = predicted.value_counts().rename_axis("class").reset_index(name="count")
+                        pred_counts["series"] = "predicted"
+                        dist_df = pd.concat([actual_counts, pred_counts], ignore_index=True)
+                        charts.append({
+                            "title": "Actual vs Predicted Class Distribution",
+                            "plotly_json": json.dumps({
+                                "data": [
+                                    {
+                                        "x": dist_df[dist_df["series"] == series]["class"].tolist(),
+                                        "y": dist_df[dist_df["series"] == series]["count"].tolist(),
+                                        "type": "bar",
+                                        "name": series,
+                                    }
+                                    for series in ["actual", "predicted"]
+                                ],
+                                "layout": {
+                                    "title": "Actual vs Predicted Class Distribution",
+                                    "xaxis": {"title": "Class"},
+                                    "yaxis": {"title": "Count"},
+                                    "barmode": "group",
+                                },
+                            })
+                        })
+                except Exception:
+                    pass
+            else:
+                try:
+                    pred_df = leader.predict(frame).as_data_frame()
+                    pred_col = "predict" if "predict" in pred_df.columns else pred_df.columns[0]
+                    actual = pd.to_numeric(df[target], errors="coerce")
+                    predicted = pd.to_numeric(pred_df[pred_col], errors="coerce")
+                    reg_df = pd.DataFrame({"actual": actual, "predicted": predicted}).dropna()
+                    if not reg_df.empty:
+                        reg_df["residual"] = reg_df["actual"] - reg_df["predicted"]
+                        min_v = float(min(reg_df["actual"].min(), reg_df["predicted"].min()))
+                        max_v = float(max(reg_df["actual"].max(), reg_df["predicted"].max()))
+                        charts.append({
+                            "title": "Actual vs Predicted",
+                            "plotly_json": json.dumps({
+                                "data": [
+                                    {
+                                        "x": reg_df["actual"].tolist(),
+                                        "y": reg_df["predicted"].tolist(),
+                                        "type": "scatter",
+                                        "mode": "markers",
+                                        "name": "predictions",
+                                    },
+                                    {
+                                        "x": [min_v, max_v],
+                                        "y": [min_v, max_v],
+                                        "type": "scatter",
+                                        "mode": "lines",
+                                        "name": "perfect",
+                                        "line": {"dash": "dash"},
+                                    },
+                                ],
+                                "layout": {
+                                    "title": "Actual vs Predicted",
+                                    "xaxis": {"title": "Actual"},
+                                    "yaxis": {"title": "Predicted"},
+                                },
+                            })
+                        })
+                        charts.append({
+                            "title": "Residuals vs Predicted",
+                            "plotly_json": json.dumps({
+                                "data": [{
+                                    "x": reg_df["predicted"].tolist(),
+                                    "y": reg_df["residual"].tolist(),
+                                    "type": "scatter",
+                                    "mode": "markers",
+                                    "name": "residuals",
+                                }],
+                                "layout": {
+                                    "title": "Residuals vs Predicted",
+                                    "xaxis": {"title": "Predicted"},
+                                    "yaxis": {"title": "Residual"},
+                                },
+                            })
+                        })
+                        charts.append({
+                            "title": "Residual Distribution",
+                            "plotly_json": json.dumps({
+                                "data": [{
+                                    "x": reg_df["residual"].tolist(),
+                                    "type": "histogram",
+                                    "nbinsx": 40,
+                                    "name": "residual",
+                                }],
+                                "layout": {
+                                    "title": "Residual Distribution",
+                                    "xaxis": {"title": "Residual"},
+                                    "yaxis": {"title": "Count"},
+                                },
+                            })
+                        })
+                except Exception:
+                    pass
+
             # Feature Importance
             try:
                 varimp = leader.varimp()
@@ -225,6 +337,7 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--target", required=True)
+    parser.add_argument("--task", choices=["auto", "classification", "regression"], default="auto")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--max-runtime-seconds", type=int, required=True)
     parser.add_argument("--max-models", type=int, required=True)
@@ -236,6 +349,7 @@ def main() -> None:
         input_path=Path(args.input),
         output_path=Path(args.output),
         target=args.target,
+        task=args.task,
         run_id=args.run_id,
         max_runtime_seconds=args.max_runtime_seconds,
         max_models=args.max_models,

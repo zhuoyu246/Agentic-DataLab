@@ -7,6 +7,12 @@ const props = defineProps<{
 }>()
 
 const chartRef = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
+const resizeChart = () => {
+  if (!chartRef.value) return
+  Plotly.Plots.resize(chartRef.value)
+}
 
 const renderChart = async () => {
   if (!chartRef.value || !props.plotlyJsonStr) return
@@ -14,12 +20,15 @@ const renderChart = async () => {
   try {
     const dataAndLayout = JSON.parse(props.plotlyJsonStr)
     const data = dataAndLayout.data || []
-    const layout = dataAndLayout.layout || {}
+    const rawLayout = dataAndLayout.layout || {}
+    const { height: _height, width: _width, ...fluidLayout } = rawLayout
+    const layout = {
+      ...fluidLayout,
+      autosize: true,
+    }
     const config = { responsive: true, displayModeBar: false }
-    Plotly.react(chartRef.value, data, layout, config)
-    requestAnimationFrame(() => {
-      if (chartRef.value) Plotly.Plots.resize(chartRef.value)
-    })
+    await Plotly.react(chartRef.value, data, layout, config)
+    requestAnimationFrame(resizeChart)
   } catch (err) {
     console.error('Failed to parse or render Plotly chart:', err)
   }
@@ -27,6 +36,10 @@ const renderChart = async () => {
 
 onMounted(() => {
   renderChart()
+  if (chartRef.value) {
+    resizeObserver = new ResizeObserver(() => requestAnimationFrame(resizeChart))
+    resizeObserver.observe(chartRef.value)
+  }
 })
 
 watch(() => props.plotlyJsonStr, () => {
@@ -34,6 +47,8 @@ watch(() => props.plotlyJsonStr, () => {
 })
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (chartRef.value) {
     Plotly.purge(chartRef.value)
   }

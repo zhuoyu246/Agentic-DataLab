@@ -21,6 +21,7 @@ export interface WorkspaceSettings {
   user_id: string
   provider: 'vllm' | 'openai-compatible' | 'mock'
   model?: string | null
+  api_key?: string | null
   use_large_planner: boolean
   use_small_react_model: boolean
   proactive_workflow_mode: boolean
@@ -136,11 +137,25 @@ export interface ChatResponse {
 const API_PREFIX = '/api/v1'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('access_token')
+  const headers: HeadersInit = init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
   const res = await fetch(`${API_PREFIX}${url}`, {
-    headers: init?.body instanceof FormData ? undefined : { 'Content-Type': 'application/json' },
+    headers,
     ...init,
   })
+
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user')
+      window.location.href = '/login'
+      throw new Error('Unauthorized')
+    }
     const text = await res.text()
     throw new Error(text || res.statusText)
   }

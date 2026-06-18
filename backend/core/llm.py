@@ -20,8 +20,9 @@ class VLLMClient:
     the application side stateless, bounded, and compatible with private models.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, api_key: str | None = None) -> None:
         self.settings = settings
+        self.api_key = api_key
         self._guard = JsonGuard()
         self._availability_cache: bool | None = None
 
@@ -62,7 +63,7 @@ class VLLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens or self.settings.llm_max_output_tokens,
         }
-        headers = {"Authorization": f"Bearer {self.settings.vllm_api_key}"}
+        headers = {"Authorization": f"Bearer {self.api_key or self.settings.vllm_api_key}"}
         async with httpx.AsyncClient(timeout=self.settings.vllm_timeout_seconds) as c:
             resp = await c.post(
                 f"{self.settings.vllm_base_url.rstrip('/')}/chat/completions",

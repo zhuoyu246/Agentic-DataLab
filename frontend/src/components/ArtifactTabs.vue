@@ -8,6 +8,7 @@ import PlotlyChart from './PlotlyChart.vue'
 const workspace = useWorkspace()
 const activeKind = ref('all')
 const selectedArtifactId = ref<string | null>(null)
+const lastArtifactCount = ref(0)
 const preview = ref<DatasetPreview | null>(null)
 const previewOpen = ref(false)
 const previewLoading = ref(false)
@@ -60,6 +61,9 @@ const artifactIcon = (artifact: ArtifactEnvelope) => {
   return FileCode
 }
 
+const preferredArtifact = (items: ArtifactEnvelope[]) =>
+  [...items].reverse().find((artifact) => artifact.kind === 'plotly_chart') ?? items[items.length - 1]
+
 function selectKind(kind: string) {
   activeKind.value = kind
   selectedArtifactId.value = null
@@ -93,11 +97,17 @@ watch(
   (items) => {
     if (!items.length) {
       selectedArtifactId.value = null
+      lastArtifactCount.value = 0
       return
     }
-    if (!selectedArtifactId.value || !items.some((item) => item.id === selectedArtifactId.value)) {
-      selectedArtifactId.value = items[0].id
+    const selectedStillExists = Boolean(
+      selectedArtifactId.value && items.some((item) => item.id === selectedArtifactId.value),
+    )
+    const hasNewArtifacts = items.length > lastArtifactCount.value
+    if (!selectedStillExists || hasNewArtifacts) {
+      selectedArtifactId.value = preferredArtifact(items).id
     }
+    lastArtifactCount.value = items.length
   },
   { immediate: true },
 )
@@ -173,7 +183,10 @@ watch(
             <span v-if="selectedArtifact.degraded" class="degraded-pill">degraded</span>
           </header>
 
-          <div class="artifact-detail-body">
+          <div
+            class="artifact-detail-body"
+            :class="{ 'chart-body': selectedArtifact.kind === 'plotly_chart' }"
+          >
             <template v-if="selectedArtifact.kind === 'plotly_chart'">
               <PlotlyChart :plotlyJsonStr="String(selectedArtifact.payload.plotly_json)" />
               <div class="chart-meta">

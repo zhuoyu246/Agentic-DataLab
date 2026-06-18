@@ -5,6 +5,8 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from api.deps import workspace
+from core.deps import get_current_user
+from models.user import User
 from schemas import AgentRunStatus, ChatMessage, ChatRequest, ChatResponse
 from services.workspace import WorkspaceService
 
@@ -17,6 +19,7 @@ async def chat(
     payload: ChatRequest,
     background_tasks: BackgroundTasks,
     service: WorkspaceService = Depends(workspace),
+    current_user: User = Depends(get_current_user),
 ):
     try:
         session = await service.get_session(session_id)

@@ -215,7 +215,7 @@ class AgentSupervisor:
         self.max_steps = max_steps
         self.max_reflexion_steps = max_reflexion_steps
         self.agents = agents or self.default_agents()
-        self.reflexion = ReflexionAgent()
+        self.reflexion = ReflexionAgent(llm=planner.llm)
         self.react = ReActToolAgent(llm=self.planner.llm)
         self.enable_hitl_interrupts = enable_hitl_interrupts
         self._contexts: dict[str, AgentContext] = {}

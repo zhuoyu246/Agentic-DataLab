@@ -1,17 +1,78 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# Secrets and local credentials
 .env
 **/.env
 .env.*
+**/.env.*
 !.env.example
-!.env.deepseek.example
-*.pkl
+!**/.env.example
+!backend/.env.deepseek.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kdbx
+id_rsa*
+id_ed25519*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.venv/
+venv/
+backend/.venv/
+
+# Runtime state, user data, databases, logs, and ML artifacts
 storage/
+**/storage/
+mlruns/
+**/mlruns/
+logs/
+**/logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pkl
+*.pickle
+*.joblib
+*.onnx
+*.pt
+*.pth
+*.h5
+
+# Frontend build and dependency outputs
 node_modules/
 dist/
 .vite/
-.venv/
-backend/.venv/
+coverage/
+
+# Local editor and agent metadata
+.idea/
+.vscode/
+.kilo/
+*.swp
+*.swo
+*~
+
+# OS and temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+
+# Local-only API diagnostics and scratch files
+backend/test_apikey.py
+backend/TEST_DYNAMIC_API_KEY.md
+frontend/workspace-styles.txt
+frontend/src/App-example.vue

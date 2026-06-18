@@ -44,7 +44,11 @@ class AutoMLAgent(BaseAgent):
         await ctx.emit("Starting adaptive AutoML flow.", agent_name=self.name)
 
         target = self._infer_target(df, instruction)
+        requested_task = self._requested_task(instruction)
         task = self._infer_task(df, instruction, target)
+        task_warning = self._task_warning(df, requested_task, task, target)
+        if task_warning:
+            await ctx.emit(task_warning, agent_name=self.name, event_type="warning")
         if task in {"classification", "regression"} and target is None:
             return AgentResult(
                 message=(
@@ -131,10 +135,11 @@ class AutoMLAgent(BaseAgent):
                         ),
                         agent_name=self.name,
                     )
-                    result = await self._run_h2o_automl(ctx, df, target or "")
+                    result = await self._run_h2o_automl(ctx, df, target or "", task)
                     engine = "h2o_automl"
                     degraded = False
-                    message = "H2O AutoML completed."
+                    completed_task = result.get("task", task)
+                    message = f"H2O AutoML completed with {completed_task} pipeline."
                 except Exception as exc:
                     fallback_reason = str(exc)
                     await ctx.emit(
@@ -154,6 +159,8 @@ class AutoMLAgent(BaseAgent):
         result["engine"] = engine if engine == "h2o_automl" else result.get("engine", engine)
         if fallback_reason:
             result["fallback_reason"] = fallback_reason
+        if task_warning:
+            result["task_warning"] = task_warning
 
         charts = result.pop("charts", [])
         artifact = ArtifactEnvelope(
@@ -165,7 +172,7 @@ class AutoMLAgent(BaseAgent):
         )
         artifacts = [artifact]
         for chart in charts:
-            artifacts.append(ArtifactEnvelope(**chart))
+            artifacts.append(self._chart_artifact(ctx, chart, meta.id))
 
         return AgentResult(
             message=message,
@@ -173,6 +180,19 @@ class AutoMLAgent(BaseAgent):
             metrics=result.get("metrics", {}),
             degraded=degraded,
         )
+
+    @staticmethod
+    def _requested_task(instruction: str) -> str | None:
+        text = (instruction or "").lower()
+        if any(w in text for w in ["anomaly", "outlier", "fraud"]):
+            return "anomaly_detection"
+        if any(w in text for w in ["cluster", "clustering", "segment", "segmentation"]):
+            return "clustering"
+        if any(w in text for w in ["regression", "regress", "residual"]):
+            return "regression"
+        if any(w in text for w in ["classification", "classify", "classifier"]):
+            return "classification"
+        return None
 
     @staticmethod
     def _infer_target(df, instruction: str) -> str | None:
@@ -207,6 +227,13 @@ class AutoMLAgent(BaseAgent):
 
     @staticmethod
     def _infer_task(df, instruction: str, target: str | None) -> str:
+        requested = AutoMLAgent._requested_task(instruction)
+        if requested in {"anomaly_detection", "clustering"}:
+            return requested
+        if target is not None and requested == "classification":
+            return "classification"
+        if target is not None and requested == "regression" and AutoMLAgent._is_numeric_target(df, target):
+            return "regression"
         text = (instruction or "").lower()
         if any(w in text for w in ["anomaly", "outlier", "fraud", "异常", "离群"]):
             return "anomaly_detection"
@@ -221,10 +248,66 @@ class AutoMLAgent(BaseAgent):
         return "classification" if unique <= min(30, max(12, len(y) // 20)) else "regression"
 
     @staticmethod
+    def _is_numeric_target(df, target: str | None) -> bool:
+        if target is None or target not in df.columns:
+            return False
+        try:
+            import pandas as pd
+
+            return bool(pd.api.types.is_numeric_dtype(df[target]))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _task_warning(df, requested_task: str | None, inferred_task: str, target: str | None) -> str | None:
+        if requested_task == "regression" and inferred_task != "regression" and target:
+            dtype = str(df[target].dtype) if target in df.columns else "unknown"
+            return (
+                f"Regression requires a numeric target. `{target}` has dtype `{dtype}`, "
+                "so AutoML ran classification instead. Select a numeric target column to run regression."
+            )
+        if requested_task == "classification" and inferred_task != "classification" and target:
+            return (
+                f"`{target}` looks continuous, so AutoML ran regression. "
+                "Choose a categorical target to run classification."
+            )
+        return None
+
+    @staticmethod
     def _approval_key(dataset_id: str, target_or_task: str, instruction: str) -> str:
         payload = f"{dataset_id}:{target_or_task}:{instruction}"
         digest = hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
         return f"automl:{digest}"
+
+    @staticmethod
+    def _chart_artifact(ctx: AgentContext, chart: Any, dataset_id: str) -> ArtifactEnvelope:
+        if isinstance(chart, ArtifactEnvelope):
+            return chart
+        if not isinstance(chart, dict):
+            return ArtifactEnvelope(
+                kind="artifact_error",
+                title="Malformed chart artifact",
+                dataset_id=dataset_id,
+                payload={"value": str(chart)},
+                degraded=True,
+                error="Chart payload was not a dictionary.",
+            )
+
+        payload = chart.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        if "plotly_json" in chart and "plotly_json" not in payload:
+            payload["plotly_json"] = chart["plotly_json"]
+
+        return ArtifactEnvelope(
+            kind=str(chart.get("kind") or "plotly_chart"),
+            title=str(chart.get("title") or "Chart"),
+            dataset_id=chart.get("dataset_id") or ctx.active_dataset_id or dataset_id,
+            payload=payload,
+            uri=chart.get("uri"),
+            degraded=bool(chart.get("degraded", False)),
+            error=chart.get("error"),
+        )
 
     async def _run_sklearn_adaptive(
         self,
@@ -772,12 +855,12 @@ class AutoMLAgent(BaseAgent):
         lowered = name.lower()
         return lowered in {"id", "uuid", "guid"} or lowered.endswith("_id") or lowered.endswith("id")
 
-    async def _run_h2o_automl(self, ctx: AgentContext, df, target: str) -> dict[str, Any]:
+    async def _run_h2o_automl(self, ctx: AgentContext, df, target: str, task: str) -> dict[str, Any]:
         import asyncio
 
-        return await asyncio.to_thread(self._run_h2o_worker_process, ctx, df, target)
+        return await asyncio.to_thread(self._run_h2o_worker_process, ctx, df, target, task)
 
-    def _run_h2o_worker_process(self, ctx: AgentContext, df, target: str) -> dict[str, Any]:
+    def _run_h2o_worker_process(self, ctx: AgentContext, df, target: str, task: str) -> dict[str, Any]:
         import json
         import os
         import subprocess
@@ -793,9 +876,9 @@ class AutoMLAgent(BaseAgent):
 
         with tempfile.TemporaryDirectory(prefix="agentic_h2o_") as tmp:
             tmp_dir = Path(tmp)
-            input_path = tmp_dir / "input.pkl"
+            input_path = tmp_dir / "input.parquet"
             output_path = tmp_dir / "output.json"
-            df.to_pickle(input_path)
+            df.to_parquet(input_path, index=False)
             args = [
                 sys.executable,
                 str(worker),
@@ -805,6 +888,8 @@ class AutoMLAgent(BaseAgent):
                 str(output_path),
                 "--target",
                 target,
+                "--task",
+                task,
                 "--run-id",
                 ctx.run_id,
                 "--max-runtime-seconds",

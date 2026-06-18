@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import approvals, chat, datasets, events, health, projects, sessions
+from api.routes import approvals, auth, chat, datasets, events, health, projects, sessions
+from api.middleware.error_handler import register_exception_handlers
+from api.middleware.rate_limit import register_rate_limiter
 from core.config import get_settings
 from core.events import EventBus
+from core.metrics import http_request_duration_seconds, http_requests_total
 from services.workspace import WorkspaceService
+from prometheus_client import make_asgi_app
 
 
 @asynccontextmanager
@@ -37,6 +42,33 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Register global exception handlers
+    register_exception_handlers(app)
+
+    # Register rate limiter
+    register_rate_limiter(app)
+
+    @app.middleware("http")
+    async def record_http_metrics(request: Request, call_next):
+        started_at = perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            route = request.scope.get("route")
+            endpoint = getattr(route, "path", request.url.path)
+            http_requests_total.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status=str(status_code),
+            ).inc()
+            http_request_duration_seconds.labels(
+                method=request.method,
+                endpoint=endpoint,
+            ).observe(perf_counter() - started_at)
+
     @app.get("/", include_in_schema=False)
     async def root():
         return {
@@ -61,6 +93,7 @@ def create_app() -> FastAPI:
         }
 
     prefix = settings.api_prefix
+    app.include_router(auth.router, prefix=prefix)
     app.include_router(health.router, prefix=prefix)
     app.include_router(sessions.router, prefix=prefix)
     app.include_router(datasets.router, prefix=prefix)
@@ -68,6 +101,11 @@ def create_app() -> FastAPI:
     app.include_router(events.router, prefix=prefix)
     app.include_router(projects.router, prefix=prefix)
     app.include_router(approvals.router, prefix=prefix)
+
+    # Mount Prometheus metrics endpoint
+    metrics_app = make_asgi_app()
+    app.mount("/metrics", metrics_app)
+
     return app
 
 

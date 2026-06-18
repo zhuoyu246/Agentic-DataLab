@@ -16,13 +16,13 @@ class DatasetStorage:
     Hot/cold split for enterprise cost control.
 
     Hot: in-process dataframe cache for active analysis.
-    Cold: parquet/pickle files under tenant-aware storage paths.
+    Cold: parquet files under tenant-aware storage paths.
     """
 
     def __init__(self, root: Path, hot_max_mb: int = 64, fmt: str = "parquet") -> None:
         self.root = root
         self.hot_max_bytes = hot_max_mb * 1024 * 1024
-        self.fmt = fmt if fmt in {"parquet", "pickle"} else "parquet"
+        self.fmt = "parquet"
         self.hot: dict[str, pd.DataFrame] = {}
         (self.root / "hot").mkdir(parents=True, exist_ok=True)
         (self.root / "cold").mkdir(parents=True, exist_ok=True)
@@ -69,10 +69,9 @@ class DatasetStorage:
         if not meta.uri:
             raise FileNotFoundError(f"dataset {meta.id} has no cold uri")
         path = Path(meta.uri)
-        if path.suffix == ".parquet":
-            df = pd.read_parquet(path)
-        else:
-            df = pd.read_pickle(path)
+        if path.suffix != ".parquet":
+            raise ValueError(f"Unsupported dataset format: {path.suffix}")
+        df = pd.read_parquet(path)
         if int(df.memory_usage(deep=True).sum()) <= self.hot_max_bytes:
             self.hot[meta.id] = df.copy()
         return df
@@ -91,15 +90,8 @@ class DatasetStorage:
     def _write_cold(self, dataset_id: str, tenant_id: str, df: pd.DataFrame) -> str:
         folder = self.root / "cold" / tenant_id
         folder.mkdir(parents=True, exist_ok=True)
-        if self.fmt == "parquet":
-            path = folder / f"{dataset_id}.parquet"
-            try:
-                df.to_parquet(path, index=False)
-                return str(path)
-            except Exception:
-                pass
-        path = folder / f"{dataset_id}.pkl"
-        df.to_pickle(path)
+        path = folder / f"{dataset_id}.parquet"
+        df.to_parquet(path, index=False)
         return str(path)
 
     def _write_meta(self, meta: DatasetMeta) -> None:
@@ -113,4 +105,3 @@ class DatasetStorage:
         path = self.root / "meta" / tenant_id / f"{dataset_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         return DatasetMeta.model_validate(data)
-

@@ -11,6 +11,7 @@
 
 body {
   margin: 0;
+  overflow: hidden;
 }
 
 button,
@@ -20,28 +21,38 @@ textarea {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
   background: #ffffff;
   border-right: 1px solid #d8dee9;
   padding: 18px;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .workbench {
   min-width: 0;
-  padding: 18px;
+  min-height: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #d8dee9;
+  background: #ffffff;
 }
 
 .topbar h1 {
@@ -52,6 +63,49 @@ textarea {
 .topbar p {
   margin: 4px 0 0;
   color: #607086;
+}
+
+.api-config {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  max-width: 400px;
+}
+
+.api-config label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #607086;
+  white-space: nowrap;
+}
+
+.api-key-field {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-family: 'Monaco', 'Courier New', monospace;
+  border: 1px solid #c7d0df;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #182230;
+  transition: all 0.2s;
+}
+
+.api-key-field:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.api-key-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f5f7fb;
+}
+
+.api-key-field::placeholder {
+  color: #8a9aaf;
 }
 
 .status-pill {
@@ -69,9 +123,17 @@ textarea {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(380px, 0.95fr) minmax(420px, 1.25fr);
-  grid-template-rows: minmax(300px, 38vh) minmax(430px, 49vh);
+  grid-template-columns: minmax(380px, 0.95fr) minmax(520px, 1.35fr);
+  grid-template-rows: minmax(220px, 0.38fr) minmax(360px, 1fr) minmax(220px, 0.42fr);
+  grid-template-areas:
+    "chat graph"
+    "chat artifacts"
+    "timeline artifacts";
   gap: 14px;
+  padding: 18px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel {
@@ -82,6 +144,7 @@ textarea {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .panel-title {
@@ -99,7 +162,19 @@ textarea {
 }
 
 .chat-panel {
-  grid-row: span 2;
+  grid-area: chat;
+}
+
+.graph-panel {
+  grid-area: graph;
+}
+
+.artifact-panel {
+  grid-area: artifacts;
+}
+
+.event-panel {
+  grid-area: timeline;
 }
 
 .artifact-panel,
@@ -289,7 +364,9 @@ textarea {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: 1fr auto;
+  height: 100%;
+  overflow: hidden;
 }
 
 .messages {
@@ -468,9 +545,11 @@ textarea {
 
 .artifact-layout {
   min-height: 0;
+  height: 100%;
   flex: 1;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .dataset-strip {
@@ -589,6 +668,7 @@ textarea {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(170px, 0.32fr) minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .artifact-rail {
@@ -644,9 +724,11 @@ textarea {
 }
 
 .artifact-detail {
+  min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .artifact-detail-header {
@@ -691,6 +773,19 @@ textarea {
   min-height: 300px;
 }
 
+.artifact-detail-body.chart-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px 12px 10px;
+}
+
+.chart-body .plotly-container {
+  height: 100%;
+  min-height: 0;
+}
+
 .empty-artifacts {
   color: #607086;
   padding: 18px;
@@ -731,7 +826,7 @@ textarea {
 }
 
 .chart-meta {
-  margin-top: 8px;
+  min-height: 16px;
   font-size: 12px;
   color: #607086;
 }
@@ -809,8 +904,15 @@ textarea {
 }
 
 @media (max-width: 1100px) {
+  body {
+    overflow: auto;
+  }
+
   .app-shell {
+    height: auto;
+    min-height: 100vh;
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .sidebar {
@@ -818,12 +920,23 @@ textarea {
     border-bottom: 1px solid #d8dee9;
   }
 
+  .workbench {
+    height: auto;
+    overflow: visible;
+  }
+
   .workspace-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: 520px 420px 360px 260px;
+    grid-template-rows: 520px 360px minmax(520px, 70vh) 260px;
+    grid-template-areas:
+      "chat"
+      "graph"
+      "artifacts"
+      "timeline";
+    overflow: visible;
   }
 
   .chat-panel {
-    grid-row: auto;
+    grid-area: chat;
   }
 }

@@ -16,6 +16,7 @@ function defaultSettings(): WorkspaceSettings {
     user_id: 'local-user',
     provider: 'vllm',
     model: null,
+    api_key: null,
     use_large_planner: true,
     use_small_react_model: true,
     proactive_workflow_mode: true,
@@ -41,6 +42,7 @@ export const useWorkspace = defineStore('workspace', {
     eventSource: null as EventSource | null,
     liveAssistantMessageId: null as string | null,
     liveLines: [] as string[],
+    apiKey: '' as string,
   }),
   getters: {
     datasets(state): DatasetMeta[] {
@@ -67,7 +69,8 @@ export const useWorkspace = defineStore('workspace', {
   actions: {
     async ensureSession() {
       if (this.session) return
-      this.session = await api.createSession(this.settings)
+      const settings = { ...this.settings, api_key: this.apiKey || null }
+      this.session = await api.createSession(settings)
       this.selectedDatasetId = this.session.pipeline.active_dataset_id ?? null
       this.ensureTargetColumn()
       this.connectEvents()
@@ -223,7 +226,7 @@ export const useWorkspace = defineStore('workspace', {
           agent_name: 'supervisor',
           metadata: { live: true },
         })
-        await api.chat(this.session.id, prompt, this.selectedDatasetId, this.settings)
+        await api.chat(this.session.id, prompt, this.selectedDatasetId, { ...this.settings, api_key: this.apiKey || null })
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
         this.liveAssistantMessageId = null

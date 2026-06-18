@@ -1,4 +1,11 @@
 declare module 'plotly.js-dist-min' {
-  const Plotly: any;
-  export default Plotly;
+  const Plotly: {
+    react: (...args: any[]) => Promise<void>
+    purge: (element: HTMLElement) => void
+    Plots: {
+      resize: (element: HTMLElement) => void
+    }
+  }
+
+  export default Plotly
 }

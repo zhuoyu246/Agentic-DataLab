@@ -28,7 +28,10 @@ const edges = computed<Edge[]>(() =>
 )
 
 function onNodeClick(event: NodeMouseEvent) {
-  workspace.selectedDatasetId = String(event.node.id)
+  const datasetId = event.node.data?.dataset_id
+  if (datasetId) {
+    workspace.selectedDatasetId = String(datasetId)
+  }
 }
 </script>
 

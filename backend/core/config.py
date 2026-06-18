@@ -5,6 +5,10 @@ from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 
 class Settings(BaseSettings):
@@ -18,11 +22,16 @@ class Settings(BaseSettings):
 
     # 1. 应用基础配置 (App Basics)
     app_env: str = "local"
-    app_host: str = "0.0.0.0"
+    app_host: str = "127.0.0.1"
     app_port: int = 8000
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+        ]
     )
 
     # 2. 大模型与推理引擎配置 (LLM & Inference)
@@ -41,11 +50,19 @@ class Settings(BaseSettings):
 
     # 4. 存储与分级缓存架构 (Storage & Tiered Cache)
     redis_url: str | None = "redis://localhost:6379/0"  # 热数据层 (Hot-tier State Checkpointer)
-    postgres_dsn: str | None = None                     # 冷数据层 (Cold-tier Archival)
+    postgres_dsn: str = "postgresql://postgres:postgres@localhost:5432/agentic_datalab"  # PostgreSQL 数据库连接
     checkpoint_ttl_seconds: int = 86_400                # 会话快照默认过期时间 (1天)
     data_root: Path = Path("./storage")                 # 物理文件存储根目录
     hot_dataset_max_mb: int = 64                        # 内存中允许的最大数据集大小，超限自动落盘
     cold_dataset_format: str = "parquet"                # 冷数据集高压缩比格式
+
+    # 6. JWT 认证配置 (JWT Authentication)
+    jwt_secret_key: str = Field(
+        default="your-secret-key-change-this-in-production-min-32-chars",
+        description="JWT secret key for token signing (must be at least 32 characters)"
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24 * 7  # 7 天
 
     # 5. AutoML 与机器学习实验追踪配置 (AutoML & MLflow)
     mlflow_tracking_uri: str = "sqlite:///./storage/mlflow.db"
@@ -54,6 +71,68 @@ class Settings(BaseSettings):
     h2o_max_runtime_seconds: int = 300      # H2O 训练最长硬超时时间 (Training Hard Timeout)
     h2o_outer_timeout_seconds: int = 360    # 容器执行超时时间
     h2o_max_models: int = 8                 # 模型搜索池最大容量
+
+    def __init__(self, **kwargs):
+        """初始化配置并验证安全设置"""
+        super().__init__(**kwargs)
+        self._validate_jwt_secret()
+        self.ensure_dirs()
+
+    def _validate_jwt_secret(self) -> None:
+        """
+        验证 JWT 密钥安全性
+        检测是否使用默认密钥或弱密钥
+        """
+        dangerous_patterns = [
+            "your-secret-key",
+            "change-this",
+            "secret-key",
+            "test-secret",
+            "dev-secret",
+            "example",
+        ]
+
+        jwt_lower = self.jwt_secret_key.lower()
+        for pattern in dangerous_patterns:
+            if pattern in jwt_lower:
+                raise ValueError(
+                    f"\n{'='*70}\n"
+                    f"🚨 SECURITY ERROR: Dangerous JWT secret key detected!\n"
+                    f"{'='*70}\n"
+                    f"The current JWT_SECRET_KEY contains '{pattern}' which is insecure.\n"
+                    f"\n"
+                    f"To fix this:\n"
+                    f"1. Generate a secure secret key:\n"
+                    f"   python backend/scripts/generate_secret.py\n"
+                    f"\n"
+                    f"2. Or use Python directly:\n"
+                    f"   python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                    f"\n"
+                    f"3. Update your .env file with the generated key:\n"
+                    f"   JWT_SECRET_KEY=<your-generated-key>\n"
+                    f"{'='*70}\n"
+                )
+
+        if len(self.jwt_secret_key) < 32:
+            raise ValueError(
+                f"\n{'='*70}\n"
+                f"🚨 SECURITY ERROR: JWT secret key is too short!\n"
+                f"{'='*70}\n"
+                f"The key must contain at least 32 characters.\n"
+                f"Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                f"{'='*70}\n"
+            )
+
+        # Warn if key looks too simple (all same character, sequential, etc.)
+        if len(set(self.jwt_secret_key)) < 10:
+            raise ValueError(
+                f"\n{'='*70}\n"
+                f"🚨 SECURITY ERROR: JWT secret key is too simple!\n"
+                f"{'='*70}\n"
+                f"The key uses too few unique characters (< 10).\n"
+                f"Please generate a cryptographically secure random key.\n"
+                f"{'='*70}\n"
+            )
 
     def ensure_dirs(self) -> None:
         """
@@ -80,4 +159,3 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.ensure_dirs()
     return settings
-

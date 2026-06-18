@@ -36,6 +36,7 @@ class WorkspaceSettings(BaseModel):
     user_id: str = "local-user"
     provider: Literal["vllm", "openai-compatible", "mock"] = "vllm"
     model: str | None = None
+    api_key: str | None = None
     use_large_planner: bool = True
     use_small_react_model: bool = True
     proactive_workflow_mode: bool = True
