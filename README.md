@@ -16,9 +16,17 @@ The frontend is a robust Vue 3 + Vite application providing real-time WebSocket 
 Agentic-DataLab features a dynamic, real-time Vue 3 interface to track multi-agent interactions, pipeline execution, and data artifacts.
 
 <div align="center">
-  <img src="docs/images/screenshot_1.png" alt="Agentic DataLab Workspace" width="80%">
+  <img src="docs/images/showcase_1_login.png" alt="Agentic DataLab login" width="80%">
   <br/>
-  <img src="docs/images/screenshot_2.png" alt="Data Profiling & Artifacts" width="80%">
+  <img src="docs/images/showcase_2_approval.png" alt="Agentic DataLab approval workflow" width="80%">
+  <br/>
+  <img src="docs/images/showcase_3_running.png" alt="Agentic DataLab running AutoML workflow" width="80%">
+  <br/>
+  <img src="docs/images/showcase_4_results.png" alt="Agentic DataLab model results and artifacts" width="80%">
+  <br/>
+  <img src="docs/images/showcase_5_usage.png" alt="Agentic DataLab usage analytics" width="80%">
+  <br/>
+  <img src="docs/images/showcase_6_pricing.png" alt="Agentic DataLab subscription plans" width="80%">
 </div>
 
 ---
