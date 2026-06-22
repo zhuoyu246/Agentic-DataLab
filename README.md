@@ -23,8 +23,6 @@ Agentic-DataLab features a dynamic, real-time Vue 3 interface to track multi-age
   <img src="docs/images/showcase_3_running.png" alt="Agentic DataLab approval and scatter plot artifacts" width="80%">
   <br/>
   <img src="docs/images/showcase_4_results.png" alt="Agentic DataLab usage analytics" width="80%">
-  <br/>
-  <img src="docs/images/showcase_5_usage.png" alt="Agentic DataLab usage overview" width="80%">
 </div>
 
 ---
