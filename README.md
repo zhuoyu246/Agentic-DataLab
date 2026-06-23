@@ -44,20 +44,20 @@ graph TD
         Supervisor -->|"Strategic Planning"| Planner["Planner Agent"]
         Planner -->|"Execution Plan"| Supervisor
         
-        Supervisor -->|"O(1) Conditional Edge"| Workers["10+ Specialist Workers<br/>(SQL, AutoML, Cleaning, etc.)"]
+        Supervisor -->|"O(1) Conditional Edge"| Workers["10+ Specialist Workers (SQL, AutoML, Cleaning, etc.)"]
         Workers -->|"Return to Hub"| Supervisor
         
-        Supervisor -.->|"Error Detected"| Reflexion["Reflexion Critic<br/>(Self-Correction)"]
+        Supervisor -.->|"Error Detected"| Reflexion["Reflexion Critic (Self-Correction)"]
         Reflexion -.->|"Revised Instruction"| Supervisor
         
-        Supervisor -->|"HITL Approval"| Human["Human-in-the-Loop<br/>(interrupt_before)"]
+        Supervisor -->|"HITL Approval"| Human["Human-in-the-Loop (interrupt_before)"]
         Human -->|"Command(resume)"| Supervisor
     end
     
     subgraph Core ["Industrial Core Infrastructure"]
-        MCP["MCP Governance Layer<br/>(Validation & Rate Limits)"]
-        Memory["Redis/Postgres Checkpointer<br/>(State Persistence & TTL)"]
-        Reducer["Annotated Reducer<br/>(Sliding Window & Truncation)"]
+        MCP["MCP Governance Layer (Validation and Rate Limits)"]
+        Memory["Redis/Postgres Checkpointer (State Persistence and TTL)"]
+        Reducer["Annotated Reducer (Sliding Window and Truncation)"]
     end
     
     LangGraph --> Core
@@ -116,7 +116,7 @@ sequenceDiagram
     rect rgb(255, 250, 240)
         note right of EventBus: Phase 3: Human-in-the-Loop (HITL)
         Worker->>Graph: Request Approval (interrupt)
-        Graph->>Memory: Persist current state & Pause
+        Graph->>Memory: Persist current state and Pause
         Graph-->>EventBus: publish(approval_required)
         EventBus-->>Pinia: SSE Yield (approval UI trigger)
         Pinia-->>UI: Render Approve/Reject Buttons
@@ -125,7 +125,7 @@ sequenceDiagram
         UI->>Pinia: Action: submitApproval
         Pinia->>API: HTTP POST /approvals (Resume)
         API->>Graph: Command(resume={"action":"approve"})
-        Graph->>Memory: Restore state & Resume execution
+        Graph->>Memory: Restore state and Resume execution
         Graph->>Worker: Execute risky tool
     end
 ```
@@ -142,14 +142,14 @@ Our engine is built upon three foundational multi-agent paradigms. These pattern
 
 ```mermaid
 graph TD
-    User(("🧑‍💻 User Query")) --> Planner["🧠 Planner Agent<br/>(Decompose task into steps)"]
+    User(("🧑‍💻 User Query")) --> Planner["🧠 Planner Agent (Decompose task into steps)"]
     
     subgraph ExecutionLoop [Execution Loop]
         direction TB
         PlanQueue[("📋 Plan Queue")]
-        Executor["🤖 Executor Agent<br/>(Executes single step)"]
+        Executor["🤖 Executor Agent (Executes single step)"]
         Tools[("🛠️ Tools / Environment")]
-        Replanner["🔄 Replanner / Monitor<br/>(Evaluate & Update Plan)"]
+        Replanner["🔄 Replanner / Monitor (Evaluate and Update Plan)"]
         
         Planner --> PlanQueue
         PlanQueue -->|Pop Next Step| Executor
@@ -181,11 +181,11 @@ graph TD
     
     subgraph ReActLoop [ReAct Iterative Loop]
         direction TB
-        ReActAgent["🧠 ReAct Agent<br/>(LLM)"]
+        ReActAgent["🧠 ReAct Agent (LLM)"]
         
-        Thought["💭 Thought<br/>(Reason about current state)"]
-        Action["⚡ Action<br/>(Select Tool + Input)"]
-        Obs["👁️ Observation<br/>(Tool Execution Result)"]
+        Thought["💭 Thought (Reason about current state)"]
+        Action["⚡ Action (Select Tool + Input)"]
+        Obs["👁️ Observation (Tool Execution Result)"]
         
         ReActAgent --> Thought
         Thought --> Action
@@ -193,7 +193,7 @@ graph TD
         Obs -->|Feed back into Context| ReActAgent
     end
     
-    Tools[("🛠️ External Tools<br/>(MCP Governance Layer)")]
+    Tools[("🛠️ External Tools (MCP Governance Layer)")]
     Action <-->|Execute| Tools
     
     ReActAgent -->|Finish / Max Iters| FinalAnswer(("🎯 Final Answer"))
