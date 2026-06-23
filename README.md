@@ -220,9 +220,9 @@ graph TD
     
     subgraph ReflectionFramework [Reflection Framework]
         direction TB
-        Generator["✍️ Generator Agent<br/>(Drafts initial response/code)"]
-        Env[("💻 Environment / Tests<br/>(Execution or Evaluator)")]
-        Critic["🧐 Critic / Reflector Agent<br/>(Analyzes errors & provides feedback)"]
+        Generator["✍️ Generator Agent (Drafts initial response/code)"]
+        Env[("💻 Environment / Tests (Execution or Evaluator)")]
+        Critic["🧐 Critic / Reflector Agent (Analyzes errors and provides feedback)"]
         
         Generator -->|Output Draft| Env
         Env -->|Execution Result / Error| Critic
